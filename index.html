@@ -70,6 +70,23 @@
   .pkt { border-bottom: 1px solid #1c2028; padding: 6px 4px; }
   .pkt .t { color: var(--muted); font-size: .78rem; font-family: var(--mono); }
   .pkt.sent { background: #1d1a10; border-left: 3px solid var(--warn); }
+  .pkt.set { background: #241020; border-left: 3px solid #d479ff; }
+  .setrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .setrow > span { font-weight: 650; }
+  button.toggle { width: auto; min-width: 92px; min-height: 44px; margin: 0; background: #343a46; }
+  button.toggle.on { background: var(--ok); color: #06241a; }
+  button.toggle.off { background: #3a3f4b; }
+  .seg { display: inline-flex; gap: 6px; }
+  .seg button { width: auto; min-width: 70px; min-height: 44px; margin: 0; background: #343a46; }
+  .seg button.active { background: var(--accent); }
+  .snap { background: var(--panel2); border-radius: 10px; padding: 10px; margin: 8px 0; }
+  .flag { background: #3a1416; border: 1px solid var(--err); color: #ffd3d3; border-radius: 8px; padding: 8px 10px; margin: 6px 0; font-weight: 650; }
+  table.hist { border-collapse: collapse; width: 100%; font-size: .8rem; }
+  table.hist td, table.hist th { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: right; white-space: nowrap; }
+  table.hist th { color: var(--muted); font-weight: 600; }
+  table.hist td:first-child, table.hist th:first-child { text-align: left; }
+  #histScroll { max-height: 320px; overflow: auto; }
+  .chart { background: #0b0d11; border-radius: 10px; padding: 6px; margin: 8px 0; }
   .frame { margin-top: 4px; padding: 6px; border-radius: 6px; background: #13241b; font-family: var(--mono); font-size: .8rem; }
   table.regs { border-collapse: collapse; width: 100%; font-size: .85rem; }
   table.regs td, table.regs th { border-bottom: 1px solid var(--line); padding: 5px 6px; text-align: left; vertical-align: top; }
@@ -81,7 +98,7 @@
 <body>
 <h1>🛴 Scooter BLE-utforskare</h1>
 
-<div class="readonly" id="readonlyBanner">🔒 <div>Appen skickar bara läsförfrågningar – den kan inte ändra några inställningar.<small>Förfrågningar skickas först när du trycker på en läsknapp. Sidan innehåller bara en enda sändfunktion, och den kan enbart bygga XBOT-läsförfrågningar (kommando 0x61 till adress 0x20).</small></div></div>
+<div class="readonly" id="readonlyBanner">🔒 <div>Appen kan läsa data och ändra grundinställningar (lyse, farthållare, nollstart, körläge, lås). Hastighets- och effektgränser kan inte ändras.<small>Avläsningar använder kommando 0x61. Inställningar skrivs bara via en hårdkodad lista med fem register (kommando 0x03) och först efter ett knapptryck. Inga andra register kan skrivas.</small></div></div>
 
 <div id="noBt" class="error hidden"></div>
 
@@ -123,6 +140,32 @@
   <details open><summary>Alla mottagna register (rådata)</summary><div id="regTable"></div></details>
 </div>
 
+<div class="panel hidden" id="settingsPanel">
+  <h2>Inställningar</h2>
+  <div class="note warn">⚠️ Dessa knappar ändrar scooterns grundinställningar. Hastighets- och effektgränser kan inte ändras härifrån. Läs av scootern först så att knapparna visar nuläget.</div>
+  <div id="settingsStatus" class="muted">Tryck "Läs data från scootern" för att aktivera knapparna.</div>
+  <div class="setrow"><span>Lyse</span><button class="toggle" id="set-light" data-key="light" disabled>–</button></div>
+  <div class="setrow"><span>Farthållare</span><button class="toggle" id="set-cruise" data-key="cruise" disabled>–</button></div>
+  <div class="setrow"><span>Nollstart</span><button class="toggle" id="set-zeroStart" data-key="zeroStart" disabled>–</button></div>
+  <div class="setrow"><span>Lås</span><button class="toggle" id="set-lock" data-key="lock" disabled>–</button></div>
+  <div class="setrow"><span>Körläge</span><div class="seg" id="set-mode"><button data-mode="0" disabled>Sport</button><button data-mode="1" disabled>Drive</button><button data-mode="2" disabled>Eco</button></div></div>
+  <div id="settingsError" class="error hidden" role="alert"></div>
+</div>
+
+<div class="panel hidden" id="healthPanel">
+  <h2>Hälsokort</h2>
+  <div class="note">ℹ️ En ögonblicksbild sparas automatiskt i din webbläsare (localStorage) efter varje fullständig läsning. Inget skickas någonstans.</div>
+  <div id="healthFlags"></div>
+  <div class="snap" id="healthLatest">Ingen ögonblicksbild sparad än.</div>
+  <div class="chart" id="healthChart"></div>
+  <div class="row">
+    <button id="snapBtn" class="secondary" disabled>Spara hälsokort nu</button>
+    <button id="histExportBtn" class="secondary">Exportera historik</button>
+    <button id="histClearBtn" class="danger">Rensa historik</button>
+  </div>
+  <div id="histScroll"></div>
+</div>
+
 <div class="panel hidden" id="treePanel">
   <h2>Tjänster och egenskaper</h2>
   <div id="tree"></div>
@@ -150,10 +193,13 @@
 <script>
 'use strict';
 /*
- * ENDAST LÄSFÖRFRÅGNINGAR: sendRead(reg, count) är den ENDA kodvägen som
- * skickar något till scootern. Den bygger alltid en XBOT-läsram med
- * kommando 0x61 till adress 0x20 och vägrar allt annat. Det finns ingen
- * generell sändfunktion och inget skrivkommando för inställningar.
+ * SÄNDVÄGAR: exakt två funktioner skickar något till scootern.
+ *  - sendRead(reg, count): bygger alltid en XBOT-läsram (kommando 0x61 till
+ *    adress 0x20) och vägrar allt annat.
+ *  - sendSetting(key, value): ändrar en grundinställning via en hårdkodad
+ *    allowlist med fem register (kommando 0x03 till adress 0x20). Inga andra
+ *    register kan skrivas, och det finns ingen generell registerskrivfunktion.
+ * Inga skrivningar till hastighets-, effekt-, ström- eller kalibreringsregister.
  */
 (function () {
   const BASE = '-0000-1000-8000-00805f9b34fb';
@@ -273,8 +319,10 @@
   // ---------- Tillstånd ----------
   const S = {
     device: null, startedAt: null, services: [], log: [], events: [], connected: false, busy: false,
-    xbot: { nameKey: null, lockedKey: null, lockedOn: null, buffers: {}, regs: {}, frameCount: 0, lastSrc: null }
+    xbot: { nameKey: null, lockedKey: null, lockedOn: null, buffers: {}, regs: {}, frameCount: 0, lastSrc: null },
+    rx: null, settingBusy: false, health: []
   };
+  const HEALTH_KEY = 'scooter-ble-health-v1', HEALTH_MAX = 200;
   const MAX_LOG = 20000, MAX_DOM = 400;
   const $ = (id) => document.getElementById(id);
   function h(tag, attrs, ...kids) {
@@ -386,7 +434,7 @@
     setStatus('Anslutningen till scootern bröts. Tryck "Anslut igen" för att återansluta.', 'err');
     for (const s of S.services) for (const c of s.characteristics) c.notifying = false;
     stopPolling('Läsningen stoppades eftersom anslutningen bröts.');
-    S.rx = null; updateReadUi();
+    S.rx = null; updateReadUi(); renderSettings();
     renderTree(); updateButtons();
   }
   function onDisconnectClick() {
@@ -455,7 +503,8 @@
     renderTree();
     detectProfile();
     $('logPanel').classList.remove('hidden'); $('xbotPanel').classList.remove('hidden');
-    renderXbot();
+    $('settingsPanel').classList.remove('hidden'); $('healthPanel').classList.remove('hidden');
+    renderXbot(); renderSettings(); renderHealth();
   }
 
   function decodeRead(uuid, b) {
@@ -646,7 +695,7 @@
     const wasCont = S.contOn;
     try {
       const done = await sendBlocks(POLL_BLOCKS, POLL_REPEAT, gen, 'Läser registerblock');
-      if (done) $('pollStatus').textContent = 'Läsning klar: ' + POLL_BLOCKS.length + ' block × ' + POLL_REPEAT + ' förfrågningar. ' + S.xbot.frameCount + ' giltiga svar totalt.';
+      if (done) { $('pollStatus').textContent = 'Läsning klar: ' + POLL_BLOCKS.length + ' block × ' + POLL_REPEAT + ' förfrågningar. ' + S.xbot.frameCount + ' giltiga svar totalt.'; addSnapshot(false); }
     } catch (e) { showError('Kunde inte skicka läsförfrågan: ' + swedishError(e)); stopPolling('Läsningen avbröts.'); return; }
     finally { if (gen === S.pollGen) { S.sweeping = false; updateReadUi(); } }
     if (wasCont && S.contOn && gen === S.pollGen) contTick();
@@ -668,12 +717,248 @@
     S.contTimer = setTimeout(contTick, Math.max(0, 1000 - (Date.now() - t0)));
   }
 
+  // ---------- Grundinställningar (skrivramar, kommando 0x03) ----------
+  // Hårdkodad allowlist. Endast dessa fem register får skrivas, och bara med värden ur "values".
+  // Alla går till huvudkontrollern (adress 0x20) med skrivkommando 0x03, exakt som esphome-xbot.
+  const SET_DEST = 0x20, SET_CMD = 0x03;
+  const SETTINGS = {
+    light:      { reg: 0xF2, bit: 0x0001, values: [0, 1],    label: 'Lyse',        block: [0xEA, 0x20] },
+    cruise:     { reg: 0x7C, bit: 0,      values: [0, 1],    label: 'Farthållare', block: [0x6E, 0x32] },
+    zeroStart:  { reg: 0x7D, bit: 0x0001, values: [0, 1],    label: 'Nollstart',   block: [0x6E, 0x32] },
+    ridingMode: { reg: 0x7E, bit: 0,      values: [0, 1, 2], label: 'Körläge',     block: [0x6E, 0x32] },
+    lock:       { reg: 0x7F, bit: 0,      values: [0, 1],    label: 'Lås',         block: [0x6E, 0x32] }
+  };
+  // Extra spärr: register som ALDRIG får skrivas (de finns inte i allowlist ovan heller).
+  const WRITE_FORBIDDEN = new Set([0xEF, 0xF0, 0xF1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0x21, 0xD1, 0xD2, 0xD7, 0xD8, 0xEE, 0xF3]);
+  const MODE_NAMES = ['Sport', 'Drive', 'Eco'];   // index 0/1/2; Walking (index 3) exponeras inte
+  const ALLOW_REGS = new Set(Object.values(SETTINGS).map((s) => s.reg));
+
+  const regRaw = (src, reg) => (S.xbot.regs[src] && S.xbot.regs[src][reg]) ? S.xbot.regs[src][reg].raw : null;
+  function waitForReg(src, reg, ms, wantRaw) {
+    const t0 = Date.now();
+    return new Promise((resolve) => {
+      (function chk() {
+        const v = regRaw(src, reg);
+        if (v != null && (wantRaw == null || v === wantRaw)) return resolve(v);
+        if (Date.now() - t0 >= ms) return resolve(v);
+        setTimeout(chk, 60);
+      })();
+    });
+  }
+
+  // Bygger (men skickar inte) en skrivram: 55 AA 04 20 03 reg val_lo val_hi ck16LE.
+  function buildWriteFrame(reg, value, key) {
+    if (!ALLOW_REGS.has(reg) || WRITE_FORBIDDEN.has(reg)) throw new Error('Spärr: register ' + h2(reg) + ' får inte skrivas.');
+    const v = value & 0xFFFF;
+    const plain = [0x55, 0xAA, 0x04, SET_DEST, SET_CMD, reg, v & 0xFF, (v >> 8) & 0xFF];
+    let sum = 0; for (let i = 2; i < plain.length; i++) sum = (sum + plain[i]) & 0xFFFF;
+    const ck = (~sum) & 0xFFFF; plain.push(ck & 0xFF, ck >> 8);
+    const p = Uint8Array.from(plain);
+    return { plain: p, encoded: xorBytes(p, key & 0xFF) };
+  }
+
+  // DEN ENDA FUNKTIONEN SOM ÄNDRAR EN INSTÄLLNING. Bara allowlist-register, bara tillåtna värden.
+  async function sendSetting(key, value) {
+    if (arguments.length !== 2) throw new Error('sendSetting tar exakt två argument.');
+    const spec = SETTINGS[key];
+    if (!spec) throw new Error('Spärr: okänd inställning "' + key + '" – skickas inte.');
+    if (!Number.isInteger(value) || !spec.values.includes(value)) throw new Error('Spärr: otillåtet värde ' + value + ' för ' + spec.label + '.');
+    if (WRITE_FORBIDDEN.has(spec.reg) || !ALLOW_REGS.has(spec.reg)) throw new Error('Spärr: registret ' + h2(spec.reg) + ' får aldrig skrivas.');
+    if (!S.rx || !S.device || !S.device.gatt || !S.device.gatt.connected) throw new Error('Inte ansluten till scootern.');
+    const k = S.xbot.lockedKey !== null ? S.xbot.lockedKey : S.xbot.nameKey;
+    // Bitfält: läs-modifiera-skriv så övriga bitar bevaras, utifrån senast lästa värde.
+    let writeVal = value;
+    if (spec.bit) {
+      let cur = regRaw(0x23, spec.reg);
+      if (cur == null) { await sendRead(spec.block[0], spec.block[1]); cur = await waitForReg(0x23, spec.reg, 1500); }
+      if (cur == null) throw new Error('Kunde inte läsa nuvarande värde för ' + spec.label + ' (register ' + h2(spec.reg) + '), så övriga bitar kan inte bevaras. Läs av scootern och försök igen.');
+      writeVal = value ? (cur | spec.bit) : (cur & ~spec.bit & 0xFFFF);
+    }
+    const f = buildWriteFrame(spec.reg, writeVal, k);
+    const p = f.plain;
+    // Spärr: måste vara exakt en skrivram (cmd 0x03) till 0x20 för ett allowlist-register, giltig checksumma.
+    if (p.length !== 10 || p[0] !== 0x55 || p[1] !== 0xAA || p[2] !== 0x04 || p[3] !== SET_DEST || p[4] !== SET_CMD || p[5] !== spec.reg || !ALLOW_REGS.has(p[5]) || !checksumOk(p)) {
+      throw new Error('Spärr: ramen är inte en giltig tillåten skrivram och skickas inte.');
+    }
+    const rx = S.rx, ch = rx.ch; let method;
+    const prev = S.txLock || Promise.resolve(); let release; S.txLock = new Promise((r) => { release = r; });
+    try { await prev; } catch (e) { /* ignorera */ }
+    try {
+      if (rx.props.includes('writeWithoutResponse') && typeof ch.writeValueWithoutResponse === 'function') { method = 'utan svar'; await ch.writeValueWithoutResponse(f.encoded); }
+      else if (typeof ch.writeValueWithResponse === 'function') { method = 'med svar'; await ch.writeValueWithResponse(f.encoded); }
+      else if (typeof ch.writeValue === 'function') { method = 'äldre API'; await ch.writeValue(f.encoded); }
+      else throw new Error('Webbläsaren saknar stöd för att skicka.');
+    } finally { release(); }
+    const d = now();
+    const entry = { level: 'set', t: d.toISOString(), ms: S.startedAt ? d - S.startedAt : 0, service: rx.svc, char: rx.uuid, charShort: short(rx.uuid),
+      setting: key, label: spec.label, reg: h2(spec.reg), value: value, writeValue: h4(writeVal), key: h2(k), method, plainHex: hex(p), hex: hex(f.encoded), length: p.length, frames: [] };
+    S.log.push(entry); if (S.log.length > MAX_LOG) S.log.shift();
+    appendLog(entry, d);
+    // Läs tillbaka registret och visa bekräftat läge.
+    await sleep(250);
+    await sendRead(spec.block[0], spec.block[1]);
+    await waitForReg(0x23, spec.reg, 1500, writeVal);
+    renderSettings();
+    return true;
+  }
+
+  function settingState(key) {
+    const spec = SETTINGS[key]; const raw = regRaw(0x23, spec.reg);
+    if (raw == null) return null;
+    return spec.bit ? (raw & spec.bit) !== 0 : raw !== 0;
+  }
+  function renderSettings() {
+    const conn = !!S.rx && !!S.device && S.device.gatt && S.device.gatt.connected;
+    const anyRead = !!S.xbot.regs[0x23];
+    $('settingsStatus').textContent = !conn ? 'Inte ansluten.' : (anyRead ? 'Knapparna visar scooterns senast avlästa läge.' : 'Tryck "Läs data från scootern" för att aktivera knapparna.');
+    for (const key of ['light', 'cruise', 'zeroStart', 'lock']) {
+      const on = settingState(key); const btn = $('set-' + key);
+      btn.disabled = !conn || on === null || S.settingBusy;
+      btn.textContent = on === null ? '–' : (on ? 'PÅ' : 'AV');
+      btn.classList.toggle('on', on === true); btn.classList.toggle('off', on === false);
+    }
+    const modeRaw = regRaw(0x23, 0x7E);
+    for (const b of $('set-mode').querySelectorAll('button')) {
+      b.disabled = !conn || modeRaw === null || S.settingBusy;
+      b.classList.toggle('active', modeRaw === Number(b.dataset.mode));
+    }
+  }
+  function showSettingsError(msg) { const b = $('settingsError'); b.textContent = msg; b.classList.remove('hidden'); event('INSTÄLLNING FEL: ' + msg, 'err'); }
+  function clearSettingsError() { $('settingsError').classList.add('hidden'); }
+  async function doSetting(key, value) {
+    if (S.settingBusy) return;
+    clearSettingsError(); S.settingBusy = true; renderSettings();
+    try { await sendSetting(key, value); $('settingsStatus').textContent = SETTINGS[key].label + ' uppdaterad och återläst.'; }
+    catch (e) { showSettingsError('Kunde inte ändra ' + (SETTINGS[key] ? SETTINGS[key].label : key) + ': ' + swedishError(e)); }
+    finally { S.settingBusy = false; renderSettings(); }
+  }
+  function onSettingToggle(key) {
+    const on = settingState(key); if (on === null) return;
+    const next = on ? 0 : 1;
+    if (key === 'lock') {
+      const msg = next ? 'Vill du LÅSA scootern? Den går inte att köra förrän du låser upp den igen.' : 'Vill du LÅSA UPP scootern?';
+      if (!window.confirm(msg)) return;
+    }
+    doSetting(key, next);
+  }
+
+  // ---------- Hälsokort ----------
+  function loadHealth() {
+    try { const raw = localStorage.getItem(HEALTH_KEY); S.health = raw ? JSON.parse(raw) : []; if (!Array.isArray(S.health)) S.health = []; }
+    catch (e) { S.health = []; }
+  }
+  function saveHealth() { try { localStorage.setItem(HEALTH_KEY, JSON.stringify(S.health)); return true; } catch (e) { return false; } }
+  function currentSnapshot() {
+    const sm = summary(); const m = sm.metrics; const g = (r) => regRaw(0x23, r);
+    const num = (id) => m[id] ? m[id].value : null;
+    return {
+      t: now().toISOString(),
+      batteryPct: num('battery'), voltage: num('voltage'), current: num('current'),
+      tempBB: g(0xBB) != null ? signed16(g(0xBB)) / 10 : null,
+      tempBE: g(0xBE) != null ? signed16(g(0xBE)) / 10 : null,
+      errorCode: g(0x1B) != null ? signed16(g(0x1B)) : null,
+      warningCode: g(0x1C) != null ? signed16(g(0x1C)) : null,
+      totalDistanceKm: num('totalDistance'), operatingTimeS: num('operatingTime'),
+      controllerVersion: m.controllerVersion ? m.controllerVersion.value : null
+    };
+  }
+  function hasData(sn) { return ['batteryPct', 'voltage', 'tempBB', 'totalDistanceKm'].some((k) => sn[k] != null); }
+  function addSnapshot(manual) {
+    const sn = currentSnapshot();
+    if (!hasData(sn)) { if (manual) showError('Ingen avläst data att spara ännu. Tryck "Läs data från scootern" först.'); return false; }
+    sn.manual = !!manual;
+    S.health.push(sn); if (S.health.length > HEALTH_MAX) S.health = S.health.slice(-HEALTH_MAX);
+    saveHealth(); renderHealth();
+    return true;
+  }
+  function healthFlags(sn) {
+    const f = [];
+    if (sn.errorCode != null && sn.errorCode !== 0) f.push('Felkod ' + sn.errorCode + ' (ej noll)');
+    if (sn.warningCode != null && sn.warningCode !== 0) f.push('Varningskod ' + sn.warningCode + ' (ej noll)');
+    const tmax = Math.max(sn.tempBB != null ? sn.tempBB : -99, sn.tempBE != null ? sn.tempBE : -99);
+    if (tmax > 60) f.push('Hög temperatur: ' + nf(tmax, 1) + ' °C (över 60 °C)');
+    return f;
+  }
+  function sparkline(series, color, lo, hi) {
+    const W = 300, H = 40, n = series.length;
+    if (n < 2) return null;
+    const span = (hi - lo) || 1;
+    const pts = series.map((v, i) => (i / (n - 1) * W).toFixed(1) + ',' + (H - ((v - lo) / span) * H).toFixed(1)).join(' ');
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg'); svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('width', '100%'); svg.setAttribute('height', H);
+    const pl = document.createElementNS(ns, 'polyline'); pl.setAttribute('fill', 'none'); pl.setAttribute('stroke', color); pl.setAttribute('stroke-width', '2'); pl.setAttribute('points', pts);
+    svg.appendChild(pl); return svg;
+  }
+  function renderHealth() {
+    $('snapBtn').disabled = !(S.xbot.regs[0x23]);
+    const latest = S.health[S.health.length - 1];
+    const L = $('healthLatest'); L.textContent = '';
+    const F = $('healthFlags'); F.textContent = '';
+    if (!latest) { L.textContent = 'Ingen ögonblicksbild sparad än.'; }
+    else {
+      for (const fl of healthFlags(latest)) F.append(h('div', { class: 'flag' }, '⚠️ ' + fl));
+      const line = (k, v) => v == null ? null : h('div', null, h('span', { class: 'muted' }, k + ': '), v);
+      L.append(
+        h('div', { class: 'muted' }, 'Senaste: ' + tstr(new Date(latest.t))),
+        line('Batteri', latest.batteryPct != null ? latest.batteryPct + ' %' : null),
+        line('Spänning', latest.voltage != null ? nf(latest.voltage, 2) + ' V' : null),
+        line('Ström', latest.current != null ? nf(latest.current, 2) + ' A' : null),
+        line('Temp (0xBB)', latest.tempBB != null ? nf(latest.tempBB, 1) + ' °C' : null),
+        line('Temp (0xBE)', latest.tempBE != null ? nf(latest.tempBE, 1) + ' °C' : null),
+        line('Felkod', latest.errorCode != null ? String(latest.errorCode) : null),
+        line('Varningskod', latest.warningCode != null ? String(latest.warningCode) : null),
+        line('Total sträcka', latest.totalDistanceKm != null ? nf(latest.totalDistanceKm, 3) + ' km' : null),
+        line('Drifttid', latest.operatingTimeS != null ? Math.floor(latest.operatingTimeS / 3600) + ' h' : null),
+        line('Kontrollerversion', latest.controllerVersion)
+      );
+    }
+    const C = $('healthChart'); C.textContent = '';
+    const volts = S.health.map((x) => x.voltage).filter((v) => v != null);
+    const batts = S.health.map((x) => x.batteryPct).filter((v) => v != null);
+    if (volts.length >= 2) { C.append(h('div', { class: 'muted' }, 'Spänning (V)')); const sv = sparkline(volts, '#4ea1ff', Math.min(...volts) - 0.2, Math.max(...volts) + 0.2); if (sv) C.append(sv); }
+    if (batts.length >= 2) { C.append(h('div', { class: 'muted' }, 'Batteri (%)')); const sb = sparkline(batts, '#3ecf8e', 0, 100); if (sb) C.append(sb); }
+    if (volts.length < 2 && batts.length < 2) C.append(h('div', { class: 'muted' }, 'Diagram visas när minst två ögonblicksbilder finns.'));
+    const scroll = $('histScroll'); scroll.textContent = '';
+    if (!S.health.length) { scroll.append(h('div', { class: 'muted' }, 'Ingen historik.')); return; }
+    const tbl = h('table', { class: 'hist' }, h('tr', null, h('th', null, 'Tid'), h('th', null, 'Bat%'), h('th', null, 'V'), h('th', null, 'A'), h('th', null, '°C'), h('th', null, 'Fel/Varn'), h('th', null, 'km')));
+    for (let i = S.health.length - 1; i >= 0; i--) {
+      const x = S.health[i]; const tmax = Math.max(x.tempBB != null ? x.tempBB : -99, x.tempBE != null ? x.tempBE : -99);
+      const flagged = (x.errorCode && x.errorCode !== 0) || (x.warningCode && x.warningCode !== 0) || tmax > 60;
+      tbl.append(h('tr', flagged ? { style: 'color:#ff9a9a' } : null,
+        h('td', null, tstr(new Date(x.t))),
+        h('td', null, x.batteryPct != null ? String(x.batteryPct) : '–'),
+        h('td', null, x.voltage != null ? nf(x.voltage, 2) : '–'),
+        h('td', null, x.current != null ? nf(x.current, 2) : '–'),
+        h('td', null, x.tempBB != null ? nf(x.tempBB, 1) : '–'),
+        h('td', null, (x.errorCode || 0) + '/' + (x.warningCode || 0)),
+        h('td', null, x.totalDistanceKm != null ? nf(x.totalDistanceKm, 1) : '–')));
+    }
+    scroll.append(tbl);
+  }
+  function exportHealth() {
+    const text = JSON.stringify({ generator: 'Scooter BLE-utforskare – hälsokort', exportedAt: now().toISOString(),
+      device: S.device ? { name: S.device.name || null, id: S.device.id || null } : null, snapshots: S.health }, null, 2);
+    try {
+      const blob = new Blob([text], { type: 'application/json' }); const url = URL.createObjectURL(blob);
+      const a = h('a', { href: url, download: 'scooter-halsokort-' + now().toISOString().replace(/[:.]/g, '-') + '.json' });
+      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setStatus('Hälsokortshistorik (' + S.health.length + ' poster) laddas ner.', 'ok');
+    } catch (e) { showFallback(text); showError('Nedladdning misslyckades – kopiera texten i rutan manuellt.'); }
+  }
+  function clearHealth() {
+    if (!window.confirm('Vill du radera all sparad hälsokortshistorik (' + S.health.length + ' poster)? Detta kan inte ångras.')) return;
+    S.health = []; saveHealth(); renderHealth(); setStatus('Hälsokortshistorik raderad.', 'ok');
+  }
+
   // ---------- Rendering ----------
   function appendLog(e, d) {
     const log = $('log');
-    if (e.level === 'sent') {
-      log.append(h('div', { class: 'pkt sent' },
-        h('div', { class: 't' }, tstr(d) + '  +' + (e.ms / 1000).toFixed(3) + ' s  ➜ SKICKAT till ' + e.charShort + '  läsförfrågan reg ' + e.reg + ', ' + e.count + ' byte (' + e.method + ')'),
+    if (e.level === 'sent' || e.level === 'set') {
+      const head = e.level === 'set'
+        ? tstr(d) + '  +' + (e.ms / 1000).toFixed(3) + ' s  ✎ INSTÄLLNING ' + e.label + ' = ' + e.value + ' (reg ' + e.reg + ', skrivvärde ' + e.writeValue + ', ' + e.method + ')'
+        : tstr(d) + '  +' + (e.ms / 1000).toFixed(3) + ' s  ➜ SKICKAT till ' + e.charShort + '  läsförfrågan reg ' + e.reg + ', ' + e.count + ' byte (' + e.method + ')';
+      log.append(h('div', { class: 'pkt ' + e.level },
+        h('div', { class: 't' }, head),
         h('div', { class: 'mono' }, 'Okodad: ' + e.plainHex),
         h('div', { class: 'mono muted' }, 'Kodad (XOR ' + e.key + '): ' + e.hex)));
       while (log.childElementCount > MAX_DOM) log.firstElementChild.remove();
@@ -720,7 +1005,7 @@
   }
 
   function renderXbot() {
-    const X = S.xbot; const sm = summary();
+    const X = S.xbot; const sm = summary(); renderSettings();
     $('xbotStatus').textContent = 'Nyckel: ' + (X.lockedKey === null ? 'ej låst' : h2(X.lockedKey) + ' (låst)') + ' · ' + X.frameCount + ' giltiga ramar · källa ' + (sm.src || '–');
     const grid = $('metrics'); grid.textContent = '';
     for (const [id, label] of DASHBOARD) {
@@ -775,7 +1060,7 @@
   function buildExport() {
     const sm = summary();
     return {
-      generator: 'Scooter BLE-utforskare (strikt skrivskyddad)', exportedAt: now().toISOString(), userAgent: navigator.userAgent,
+      generator: 'Scooter BLE-utforskare (läsning + grundinställningar)', exportedAt: now().toISOString(), userAgent: navigator.userAgent,
       device: S.device ? { name: S.device.name || null, id: S.device.id || null, connected: !!(S.device.gatt && S.device.gatt.connected) } : null,
       services: S.services.map((s) => ({ uuid: s.uuid, short: s.short, name: s.name, error: s.error,
         characteristics: s.characteristics.map((c) => ({ uuid: c.uuid, short: c.short, name: c.name, properties: c.properties,
@@ -784,9 +1069,12 @@
       xbot: { nameDerivedKey: S.xbot.nameKey == null ? null : h2(S.xbot.nameKey), lockedKey: S.xbot.lockedKey == null ? null : h2(S.xbot.lockedKey),
         lockedOn: S.xbot.lockedOn, validFrames: S.xbot.frameCount, summary: sm,
         requestChannel: S.rx ? { profile: S.rx.profile, service: S.rx.svc, characteristic: S.rx.uuid } : null,
+        settings: Object.fromEntries(Object.keys(SETTINGS).map((k) => [k, k === 'ridingMode' ? (regRaw(0x23, 0x7E) != null ? (MODE_NAMES[regRaw(0x23, 0x7E)] || ('index ' + regRaw(0x23, 0x7E))) : null) : settingState(k)])),
+        settingWrites: S.log.filter((e) => e.level === 'set').length,
         sentRequests: S.log.filter((e) => e.level === 'sent').length, pollBlocks: POLL_BLOCKS.map(([r, n]) => ({ reg: h2(r), bytes: h2(n) })),
         registers: Object.fromEntries(Object.entries(S.xbot.regs).map(([src, regs]) => [h2(Number(src)),
           Object.fromEntries(Object.entries(regs).map(([r, v]) => [h2(Number(r)), Object.assign(describeReg(Number(src), Number(r), v.raw), { t: v.t })]))])) },
+      health: S.health,
       notifications: S.log, events: S.events
     };
   }
@@ -832,7 +1120,13 @@
   updateButtons();
   $('readBtn').addEventListener('click', onReadClick);
   $('contToggle').addEventListener('change', onContToggle);
-  window.__scooterExplorer = { state: S, buildExport, keyForName, extractFrames, checksumOk, buildReadFrame, POLL_BLOCKS, LIVE_BLOCKS };
+  for (const key of ['light', 'cruise', 'zeroStart', 'lock']) $('set-' + key).addEventListener('click', () => onSettingToggle(key));
+  for (const b of $('set-mode').querySelectorAll('button')) b.addEventListener('click', () => { if (!S.settingBusy) doSetting('ridingMode', Number(b.dataset.mode)); });
+  $('snapBtn').addEventListener('click', () => addSnapshot(true));
+  $('histExportBtn').addEventListener('click', exportHealth);
+  $('histClearBtn').addEventListener('click', clearHealth);
+  loadHealth(); renderHealth();
+  window.__scooterExplorer = { state: S, buildExport, keyForName, extractFrames, checksumOk, buildReadFrame, buildWriteFrame, sendSetting, SETTINGS, WRITE_FORBIDDEN, POLL_BLOCKS, LIVE_BLOCKS, currentSnapshot, addSnapshot };
 })();
 </script>
 </body>
