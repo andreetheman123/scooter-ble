@@ -69,6 +69,7 @@
   #log { max-height: 60vh; overflow: auto; background: #0b0d11; border-radius: 10px; padding: 6px; }
   .pkt { border-bottom: 1px solid #1c2028; padding: 6px 4px; }
   .pkt .t { color: var(--muted); font-size: .78rem; font-family: var(--mono); }
+  .pkt.sent { background: #1d1a10; border-left: 3px solid var(--warn); }
   .frame { margin-top: 4px; padding: 6px; border-radius: 6px; background: #13241b; font-family: var(--mono); font-size: .8rem; }
   table.regs { border-collapse: collapse; width: 100%; font-size: .85rem; }
   table.regs td, table.regs th { border-bottom: 1px solid var(--line); padding: 5px 6px; text-align: left; vertical-align: top; }
@@ -80,7 +81,7 @@
 <body>
 <h1>🛴 Scooter BLE-utforskare</h1>
 
-<div class="readonly" id="readonlyBanner">🔒 <div>Appen skriver aldrig till scootern<small>Sidan läser och lyssnar bara. Inga kommandon eller värden skickas någonsin till scooterns egenskaper.</small></div></div>
+<div class="readonly" id="readonlyBanner">🔒 <div>Appen skickar bara läsförfrågningar – den kan inte ändra några inställningar.<small>Förfrågningar skickas först när du trycker på en läsknapp. Sidan innehåller bara en enda sändfunktion, och den kan enbart bygga XBOT-läsförfrågningar (kommando 0x61 till adress 0x20).</small></div></div>
 
 <div id="noBt" class="error hidden"></div>
 
@@ -110,10 +111,16 @@
 
 <div class="panel hidden" id="xbotPanel">
   <h2>XBOT-avkodning</h2>
-  <div class="note warn">⚠️ Kontrollern kanske bara svarar när en app skickar en förfrågan. Eftersom den här sidan aldrig skriver något kan det hända att inga paket alls tas emot – det är helt normalt.</div>
+  <div class="note warn">⚠️ Kontrollern svarar bara när den får en förfrågan. Tryck på "Läs data från scootern" – sidan skickar då enbart läsförfrågningar (samma registerblock som esphome-xbot läser).</div>
+  <div id="rxInfo" class="muted">Ingen XBOT-skrivkanal hittad ännu.</div>
+  <button id="readBtn" disabled>Läs data från scootern</button>
+  <label class="check"><input type="checkbox" id="contToggle" disabled> Läs kontinuerligt (varje sekund)</label>
+  <div id="pollStatus" class="muted"></div>
   <div id="xbotStatus" class="muted">Väntar på data …</div>
+  <h2 style="margin-top:12px">Instrumentpanel</h2>
   <div class="grid" id="metrics"></div>
-  <details><summary>Alla mottagna register</summary><div id="regTable"></div></details>
+  <div class="muted" id="lastUpdate"></div>
+  <details open><summary>Alla mottagna register (rådata)</summary><div id="regTable"></div></details>
 </div>
 
 <div class="panel hidden" id="treePanel">
@@ -143,9 +150,10 @@
 <script>
 'use strict';
 /*
- * STRIKT SKRIVSKYDDAD: den här filen innehåller inga anrop som skriver
- * värden till BLE-egenskaper eller deskriptorer. Endast läsning,
- * uppräkning och notifieringar används.
+ * ENDAST LÄSFÖRFRÅGNINGAR: sendRead(reg, count) är den ENDA kodvägen som
+ * skickar något till scootern. Den bygger alltid en XBOT-läsram med
+ * kommando 0x61 till adress 0x20 och vägrar allt annat. Det finns ingen
+ * generell sändfunktion och inget skrivkommando för inställningar.
  */
 (function () {
   const BASE = '-0000-1000-8000-00805f9b34fb';
@@ -173,11 +181,11 @@
     [s16(0x2A19)]: 'Batterinivå', [s16(0x2A23)]: 'System-ID', [s16(0x2A24)]: 'Modellnummer', [s16(0x2A25)]: 'Serienummer',
     [s16(0x2A26)]: 'Firmwareversion', [s16(0x2A27)]: 'Hårdvaruversion', [s16(0x2A28)]: 'Mjukvaruversion',
     [s16(0x2A29)]: 'Tillverkare', [s16(0x2A2A)]: 'IEEE-certifiering', [s16(0x2A50)]: 'PnP-ID',
-    '6e400002-b5a3-f393-e0a9-e50e24dcca9e': 'NUS RX (appens skrivkanal – används ej här)',
+    '6e400002-b5a3-f393-e0a9-e50e24dcca9e': 'NUS RX (hit skickas läsförfrågningar)',
     '6e400003-b5a3-f393-e0a9-e50e24dcca9e': 'NUS TX (notifieringar från scootern)',
-    [s16(0xae01)]: 'AE01 (XBOT skrivkanal – används ej här)', [s16(0xae02)]: 'AE02 (XBOT notifieringar)',
+    [s16(0xae01)]: 'AE01 (XBOT-förfrågningskanal)', [s16(0xae02)]: 'AE02 (XBOT notifieringar)',
     [s16(0xffe1)]: 'FFE1 (seriell data)', [s16(0xfff1)]: 'FFF1 (XBOT notifieringar, profil f2/f1)',
-    [s16(0xfff2)]: 'FFF2 (XBOT skrivkanal, profil f2/f1 – används ej här)', [s16(0xfff3)]: 'FFF3 (XBOT skrivkanal – används ej här)',
+    [s16(0xfff2)]: 'FFF2 (XBOT-förfrågningskanal, profil f2/f1)', [s16(0xfff3)]: 'FFF3 (XBOT-förfrågningskanal)',
     [s16(0xfff4)]: 'FFF4 (XBOT notifieringar, profil ffe0)', [s16(0xfff7)]: 'FFF7 (XBOT notifieringar, profil f3/f7)'
   };
   const DIS_STRINGS = new Set([0x2A00, 0x2A24, 0x2A25, 0x2A26, 0x2A27, 0x2A28, 0x2A29].map(s16));
@@ -377,6 +385,8 @@
     S.connected = false;
     setStatus('Anslutningen till scootern bröts. Tryck "Anslut igen" för att återansluta.', 'err');
     for (const s of S.services) for (const c of s.characteristics) c.notifying = false;
+    stopPolling('Läsningen stoppades eftersom anslutningen bröts.');
+    S.rx = null; updateReadUi();
     renderTree(); updateButtons();
   }
   function onDisconnectClick() {
@@ -443,7 +453,9 @@
       }
     }
     renderTree();
+    detectProfile();
     $('logPanel').classList.remove('hidden'); $('xbotPanel').classList.remove('hidden');
+    renderXbot();
   }
 
   function decodeRead(uuid, b) {
@@ -462,7 +474,7 @@
   function onPacket(c, ev) {
     const dv = ev.target && ev.target.value; if (!dv) return;
     const b = toBytes(dv); const d = now(); c.packets++;
-    const entry = { t: d.toISOString(), ms: S.startedAt ? d - S.startedAt : 0, service: c._svc, char: c.uuid, charShort: c.short,
+    const entry = { level: 'recv', t: d.toISOString(), ms: S.startedAt ? d - S.startedAt : 0, service: c._svc, char: c.uuid, charShort: c.short,
       hex: hex(b), ascii: ascii(b), length: b.length, frames: [] };
     try { entry.frames = xbotFeed(c.uuid, b); } catch (e) { entry.decodeError = String(e && e.message); }
     if (c.uuid === s16(0x2A19) || DIS_STRINGS.has(c.uuid)) { const dr = decodeRead(c.uuid, b); entry.decoded = dr.decoded; c.read = dr; renderTree(); }
@@ -498,7 +510,7 @@
     return out;
   }
   function handleFrame(f, key, charKey) {
-    const X = S.xbot; X.frameCount++;
+    const X = S.xbot; X.frameCount++; X.lastFrameAt = now();
     const src = f[3], cmd = f[4], base = f[5], plen = f.length - 8;
     const regs = []; const t = now().toISOString();
     X.regs[src] = X.regs[src] || {}; X.lastSrc = src;
@@ -515,9 +527,158 @@
     return fr;
   }
 
+  // ---------- XBOT-läsförfrågningar (ENDA sändvägen) ----------
+  // Profiler i samma ordning som esphome-xbot (xbot_protocol.cpp, PROFILE_TABLE).
+  const XBOT_PROFILES = [
+    { name: 'nus', svc: '6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx: '6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx: '6e400003-b5a3-f393-e0a9-e50e24dcca9e' },
+    { name: 'ae00', svc: s16(0xae00), rx: s16(0xae01), tx: s16(0xae02) },
+    { name: 'ffe0', svc: s16(0xffe0), rx: s16(0xfff3), tx: s16(0xfff4) },
+    { name: 'fff0-f3f7', svc: s16(0xfff0), rx: s16(0xfff3), tx: s16(0xfff7) },
+    { name: 'fff0-f2f1', svc: s16(0xfff0), rx: s16(0xfff2), tx: s16(0xfff1) }
+  ];
+  // Registerblock (första register, antal byte) – huvudkontrollerns poster ur
+  // esphome-xbot const.py POLL_TABLE (dest 0x20, läskommando 0x61), i samma ordning.
+  // Modulposten (dest 0x21, annat kommando) är medvetet utelämnad.
+  const POLL_BLOCKS = [[0xEE, 0x0C], [0x46, 0x2A], [0x1A, 0x34], [0x6E, 0x32], [0xC2, 0x2C], [0xEA, 0x20], [0x14, 0x1E],
+    [0x5A, 0x2A], [0x32, 0x32], [0xBB, 0x06], [0x58, 0x10], [0x2A, 0x22], [0xBA, 0x0E], [0x66, 0x0E], [0xA0, 0x3A],
+    [0xD4, 0x1A], [0x7B, 0x0A], [0xF2, 0x06], [0xFD, 0x06]];
+  const POLL_REPEAT = 2;          // esphome-xbot skickar varje block två gånger
+  const POLL_INTERVAL_MS = 300;   // esphome-xbot PROBE_INTERVAL_MS
+  // Kontinuerligt läge: blocken som täcker instrumentpanelen, varje sekund.
+  const LIVE_BLOCKS = [[0x1A, 0x34], [0x46, 0x2A], [0xBB, 0x06]];
+  const DASHBOARD = [['battery', 'Batteri'], ['speed', 'Hastighet'], ['voltage', 'Spänning'], ['current', 'Ström'], ['power', 'Effekt (V×A)'],
+    ['totalDistance', 'Total sträcka'], ['tripDistance', 'Trippsträcka'], ['temperature', 'Temperatur'], ['errorCode', 'Felkod'],
+    ['warningCode', 'Varningskod'], ['controllerVersion', 'Kontrollerversion'], ['operatingTime', 'Drifttid']];
+
+  // Bygger (men skickar inte) en läsram: 55 AA len 20 61 reg count ck16LE,
+  // len = antal payloadbyte + 2, ck = ~(summa från len t.o.m. payload) & 0xFFFF.
+  function buildReadFrame(reg, count, key) {
+    const XBOT_READ_DEST = 0x20, XBOT_READ_CMD = 0x61;
+    if (!Number.isInteger(reg) || reg < 0 || reg > 0xFF) throw new Error('Ogiltigt register: ' + reg);
+    if (!Number.isInteger(count) || count < 2 || count > 0x40 || count % 2 !== 0) throw new Error('Ogiltigt antal byte: ' + count);
+    if (reg + count / 2 - 1 > 0xFF) throw new Error('Registerblocket går utanför 0xFF');
+    const payload = [count];
+    const plain = [0x55, 0xAA, payload.length + 2, XBOT_READ_DEST, XBOT_READ_CMD, reg].concat(payload);
+    let sum = 0; for (let i = 2; i < plain.length; i++) sum = (sum + plain[i]) & 0xFFFF;
+    const ck = (~sum) & 0xFFFF; plain.push(ck & 0xFF, ck >> 8);
+    const p = Uint8Array.from(plain);
+    return { plain: p, encoded: xorBytes(p, key & 0xFF) };
+  }
+
+  // DEN ENDA FUNKTIONEN SOM SKICKAR NÅGOT TILL SCOOTERN. Endast läsning (kommando 0x61).
+  async function sendRead(reg, count) {
+    if (arguments.length !== 2) throw new Error('sendRead tar exakt två argument (register, antal byte).');
+    if (!S.rx || !S.device || !S.device.gatt || !S.device.gatt.connected) throw new Error('Inte ansluten till någon XBOT-förfrågningskanal.');
+    const key = S.xbot.lockedKey !== null ? S.xbot.lockedKey : S.xbot.nameKey;
+    const f = buildReadFrame(reg, count, key);
+    const p = f.plain;
+    // Spärr: vägra allt som inte är exakt en läsram med kommando 0x61 till 0x20 och giltig checksumma.
+    if (p.length !== 9 || p[0] !== 0x55 || p[1] !== 0xAA || p[3] !== 0x20 || p[4] !== 0x61 || !checksumOk(p)) {
+      throw new Error('Spärr: ramen är inte en giltig läsförfrågan och skickas inte.');
+    }
+    const rx = S.rx, ch = rx.ch; let method;
+    // En förfrågan i taget (GATT tillåter bara en pågående operation).
+    const prev = S.txLock || Promise.resolve(); let release; S.txLock = new Promise((r) => { release = r; });
+    try { await prev; } catch (e) { /* ignorera */ }
+    try {
+      if (rx.props.includes('writeWithoutResponse') && typeof ch.writeValueWithoutResponse === 'function') {
+        method = 'utan svar'; await ch.writeValueWithoutResponse(f.encoded);
+      } else if (typeof ch.writeValueWithResponse === 'function') {
+        method = 'med svar'; await ch.writeValueWithResponse(f.encoded);
+      } else {
+        throw new Error('Webbläsaren saknar stöd för att skicka förfrågningar (writeValueWithoutResponse/writeValueWithResponse).');
+      }
+    } finally { release(); }
+    const d = now();
+    const entry = { level: 'sent', t: d.toISOString(), ms: S.startedAt ? d - S.startedAt : 0, service: rx.svc, char: rx.uuid, charShort: short(rx.uuid),
+      reg: h2(reg), count: count, key: h2(key), method, plainHex: hex(p), hex: hex(f.encoded), length: p.length, frames: [] };
+    S.log.push(entry); if (S.log.length > MAX_LOG) S.log.shift();
+    appendLog(entry, d);
+  }
+
+  function detectProfile() {
+    S.rx = null;
+    const find = (svc, uuid) => { const so = S.services.find((s) => s.uuid === svc); return so && so.characteristics.find((c) => c.uuid === uuid); };
+    for (const pr of XBOT_PROFILES) {
+      const rx = find(pr.svc, pr.rx), tx = find(pr.svc, pr.tx);
+      if (rx && tx && (rx.properties.includes('write') || rx.properties.includes('writeWithoutResponse'))) {
+        S.rx = { profile: pr.name, svc: pr.svc, uuid: rx.uuid, ch: rx._ch, props: rx.properties, tx: tx.uuid };
+        event('XBOT-profil "' + pr.name + '": förfrågningar till ' + short(rx.uuid) + ', svar på ' + short(tx.uuid), 'ok');
+        break;
+      }
+    }
+    updateReadUi();
+  }
+  function updateReadUi() {
+    const ok = !!S.rx && !!S.device && S.device.gatt && S.device.gatt.connected;
+    $('readBtn').disabled = !ok || S.sweeping;
+    $('contToggle').disabled = !ok;
+    if (!ok) $('contToggle').checked = false;
+    $('rxInfo').textContent = S.rx ? 'XBOT-profil: ' + S.rx.profile + ' · förfrågningar till ' + short(S.rx.uuid) + ' · svar på ' + short(S.rx.tx) +
+      ' · nyckel ' + h2(S.xbot.lockedKey !== null ? S.xbot.lockedKey : S.xbot.nameKey)
+      : 'Ingen XBOT-förfrågningskanal hittad (NUS 6e400002, ae01, fff3 eller fff2). Läsknappen är avstängd.';
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function stopPolling(msg) {
+    const was = S.contOn || S.sweeping;
+    S.contOn = false; S.pollGen = (S.pollGen || 0) + 1; S.sweeping = false;
+    if (S.contTimer) { clearTimeout(S.contTimer); S.contTimer = null; }
+    $('contToggle').checked = false;
+    if (was && msg) $('pollStatus').textContent = msg;
+    updateReadUi();
+  }
+  async function sendBlocks(blocks, repeat, gen, label) {
+    let n = 0; const total = blocks.length * repeat;
+    for (const [reg, count] of blocks) for (let r = 0; r < repeat; r++) {
+      if (gen !== S.pollGen) return false;
+      await sendRead(reg, count); n++;
+      if (label) $('pollStatus').textContent = label + ' ' + n + '/' + total + ' (reg ' + h2(reg) + ')';
+      await sleep(POLL_INTERVAL_MS);
+    }
+    return true;
+  }
+  async function onReadClick() {
+    if (S.sweeping) return;
+    if (S.contTimer) { clearTimeout(S.contTimer); S.contTimer = null; }
+    clearError(); S.sweeping = true; updateReadUi(); const gen = S.pollGen = (S.pollGen || 0) + 1;
+    const wasCont = S.contOn;
+    try {
+      const done = await sendBlocks(POLL_BLOCKS, POLL_REPEAT, gen, 'Läser registerblock');
+      if (done) $('pollStatus').textContent = 'Läsning klar: ' + POLL_BLOCKS.length + ' block × ' + POLL_REPEAT + ' förfrågningar. ' + S.xbot.frameCount + ' giltiga svar totalt.';
+    } catch (e) { showError('Kunde inte skicka läsförfrågan: ' + swedishError(e)); stopPolling('Läsningen avbröts.'); return; }
+    finally { if (gen === S.pollGen) { S.sweeping = false; updateReadUi(); } }
+    if (wasCont && S.contOn && gen === S.pollGen) contTick();
+  }
+  function onContToggle() {
+    if ($('contToggle').checked) {
+      if (!S.rx) { $('contToggle').checked = false; showError('Ingen XBOT-förfrågningskanal – anslut först.'); return; }
+      clearError(); S.contOn = true; S.pollGen = (S.pollGen || 0) + 1; S.sweeping = false; updateReadUi();
+      $('pollStatus').textContent = 'Läser kontinuerligt (varje sekund) …'; contTick();
+    } else stopPolling('Kontinuerlig läsning stoppad.');
+  }
+  async function contTick() {
+    if (!S.contOn || S.sweeping) return;
+    const gen = S.pollGen; const t0 = Date.now();
+    try { await sendBlocks(LIVE_BLOCKS, 1, gen, null); }
+    catch (e) { showError('Kunde inte skicka läsförfrågan: ' + swedishError(e)); stopPolling('Kontinuerlig läsning stoppad på grund av fel.'); return; }
+    if (!S.contOn || gen !== S.pollGen) return;
+    $('pollStatus').textContent = 'Läser kontinuerligt (varje sekund) · ' + S.xbot.frameCount + ' giltiga svar';
+    S.contTimer = setTimeout(contTick, Math.max(0, 1000 - (Date.now() - t0)));
+  }
+
   // ---------- Rendering ----------
   function appendLog(e, d) {
     const log = $('log');
+    if (e.level === 'sent') {
+      log.append(h('div', { class: 'pkt sent' },
+        h('div', { class: 't' }, tstr(d) + '  +' + (e.ms / 1000).toFixed(3) + ' s  ➜ SKICKAT till ' + e.charShort + '  läsförfrågan reg ' + e.reg + ', ' + e.count + ' byte (' + e.method + ')'),
+        h('div', { class: 'mono' }, 'Okodad: ' + e.plainHex),
+        h('div', { class: 'mono muted' }, 'Kodad (XOR ' + e.key + '): ' + e.hex)));
+      while (log.childElementCount > MAX_DOM) log.firstElementChild.remove();
+      log.scrollTop = log.scrollHeight;
+      $('logCount').textContent = '(' + S.log.length + ' poster)';
+      return;
+    }
     const el = h('div', { class: 'pkt' },
       h('div', { class: 't' }, tstr(d) + '  +' + (e.ms / 1000).toFixed(3) + ' s  ' + e.charShort + '  (' + e.length + ' B)'),
       h('div', { class: 'mono' }, e.hex), h('div', { class: 'mono muted' }, e.ascii));
@@ -531,7 +692,7 @@
     log.append(el);
     while (log.childElementCount > MAX_DOM) log.firstElementChild.remove();
     const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 80; if (stick) log.scrollTop = log.scrollHeight;
-    $('logCount').textContent = '(' + S.log.length + ' paket)';
+    $('logCount').textContent = '(' + S.log.length + ' poster)';
   }
 
   function summary() {
@@ -552,6 +713,7 @@
       const a = g(0x1E), b = g(0x1D); const txt = (a != null ? a.toString(16).toUpperCase().padStart(4, '0') : '????') + (b != null ? b.toString(16).toUpperCase().padStart(4, '0') : '????');
       put('controllerVersion', 'Kontrollerversion', txt, '0x1E=' + (a != null ? h4(a) : '–') + ' 0x1D=' + (b != null ? h4(b) : '–'), txt);
     }
+    if (g(0x32) != null && g(0x33) != null) { const sec = g(0x33) * 65536 + g(0x32); put('operatingTime', 'Drifttid', Math.floor(sec / 3600) + ' h ' + String(Math.floor(sec / 60) % 60).padStart(2, '0') + ' min', '0x33:0x32 = ' + h4(g(0x33)) + ':' + h4(g(0x32)), sec); }
     return { src: src != null ? h2(src) : null, metrics: m };
   }
 
@@ -559,11 +721,13 @@
     const X = S.xbot; const sm = summary();
     $('xbotStatus').textContent = 'Nyckel: ' + (X.lockedKey === null ? 'ej låst' : h2(X.lockedKey) + ' (låst)') + ' · ' + X.frameCount + ' giltiga ramar · källa ' + (sm.src || '–');
     const grid = $('metrics'); grid.textContent = '';
-    for (const id in sm.metrics) {
-      const v = sm.metrics[id];
+    for (const [id, label] of DASHBOARD) {
+      const v = sm.metrics[id] || { label, text: '–', raw: 'ingen data än' };
       grid.append(h('div', { class: 'metric', 'data-metric': id }, h('div', { class: 'k' }, v.label), h('div', { class: 'v' }, v.text), h('div', { class: 'r' }, v.raw)));
     }
+    if (X.lastFrameAt) $('lastUpdate').textContent = 'Senast uppdaterad: ' + tstr(X.lastFrameAt);
     const wrap = $('regTable'); wrap.textContent = '';
+    if (!Object.keys(X.regs).length) wrap.append(h('div', { class: 'muted' }, 'Inga register mottagna än.'));
     for (const src of Object.keys(X.regs).map(Number).sort((a, b) => a - b)) {
       const tbl = h('table', { class: 'regs' }, h('tr', null, h('th', null, 'Reg'), h('th', null, 'Rå'), h('th', null, 'Betydelse'), h('th', null, 'Värde')));
       for (const reg of Object.keys(X.regs[src]).map(Number).sort((a, b) => a - b)) {
@@ -617,6 +781,8 @@
       readValues: S.services.flatMap((s) => s.characteristics.filter((c) => c.read).map((c) => Object.assign({ service: s.short, char: c.short, uuid: c.uuid, name: c.name }, c.read))),
       xbot: { nameDerivedKey: S.xbot.nameKey == null ? null : h2(S.xbot.nameKey), lockedKey: S.xbot.lockedKey == null ? null : h2(S.xbot.lockedKey),
         lockedOn: S.xbot.lockedOn, validFrames: S.xbot.frameCount, summary: sm,
+        requestChannel: S.rx ? { profile: S.rx.profile, service: S.rx.svc, characteristic: S.rx.uuid } : null,
+        sentRequests: S.log.filter((e) => e.level === 'sent').length, pollBlocks: POLL_BLOCKS.map(([r, n]) => ({ reg: h2(r), bytes: h2(n) })),
         registers: Object.fromEntries(Object.entries(S.xbot.regs).map(([src, regs]) => [h2(Number(src)),
           Object.fromEntries(Object.entries(regs).map(([r, v]) => [h2(Number(r)), Object.assign(describeReg(Number(src), Number(r), v.raw), { t: v.t })]))])) },
       notifications: S.log, events: S.events
@@ -662,7 +828,9 @@
     navigator.bluetooth.getAvailability().then((ok) => { if (!ok) showError('Bluetooth verkar vara avstängt eller otillgängligt. Slå på Bluetooth och försök igen.'); }).catch(() => {});
   }
   updateButtons();
-  window.__scooterExplorer = { state: S, buildExport, keyForName, extractFrames, checksumOk };
+  $('readBtn').addEventListener('click', onReadClick);
+  $('contToggle').addEventListener('change', onContToggle);
+  window.__scooterExplorer = { state: S, buildExport, keyForName, extractFrames, checksumOk, buildReadFrame, POLL_BLOCKS, LIVE_BLOCKS };
 })();
 </script>
 </body>
