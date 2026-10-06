@@ -585,8 +585,10 @@
         method = 'utan svar'; await ch.writeValueWithoutResponse(f.encoded);
       } else if (typeof ch.writeValueWithResponse === 'function') {
         method = 'med svar'; await ch.writeValueWithResponse(f.encoded);
+      } else if (typeof ch.writeValue === 'function') {
+        method = 'äldre API'; await ch.writeValue(f.encoded);
       } else {
-        throw new Error('Webbläsaren saknar stöd för att skicka förfrågningar (writeValueWithoutResponse/writeValueWithResponse).');
+        throw new Error('Webbläsaren saknar stöd för att skicka förfrågningar.');
       }
     } finally { release(); }
     const d = now();
