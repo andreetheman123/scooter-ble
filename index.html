@@ -296,6 +296,7 @@
     if (name === 'InvalidStateError') return 'Ogiltigt läge – enheten är troligen frånkopplad.\n(' + m + ')';
     if (name === 'TypeError') return 'Ogiltig parameter (t.ex. felaktig UUID).\n(' + m + ')';
     if (name === 'TimeoutError') return m;
+    if (typeof e === 'number' || /^\d+$/.test(m)) return 'Bluetooth-fel ' + m + ' från webbläsaren. Kontrollera att Bluetooth är påslaget, att Bluefy har tillåtelse att använda Bluetooth (iOS Inställningar → Bluefy → Bluetooth) och att MiniRobot är helt stängd. Prova också att kryssa i "Visa alla enheter" och söka igen.';
     return 'Oväntat fel: ' + (name ? name + ': ' : '') + m;
   }
   function timeout(p, ms, msg) {
@@ -322,7 +323,8 @@
     if (errors.length) { showError('Ogiltig UUID: ' + errors.join(', ') + '\nAnvänd t.ex. fff0, 0xfff0 eller en full 128-bitars UUID.'); return; }
     const seen = new Set(); const optionalServices = [];
     for (const u of OPTIONAL_SERVICES.concat(list)) { const f = full(u); if (!seen.has(f)) { seen.add(f); optionalServices.push(u); } }
-    const opts = $('acceptAll').checked ? { acceptAllDevices: true, optionalServices } : { filters: FILTERS, optionalServices };
+    const optStr = optionalServices.map(full);
+    const opts = $('acceptAll').checked ? { acceptAllDevices: true, optionalServices: optStr } : { filters: FILTERS, optionalServices: optStr };
     setStatus('Söker … välj scootern i listan.', 'warn');
     // requestDevice anropas direkt i klickhanteraren (krav på användargest).
     navigator.bluetooth.requestDevice(opts).then((device) => {
