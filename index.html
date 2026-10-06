@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0f1115">
+<title>Scooter BLE-utforskare (skrivskyddad)</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #181b22; --panel2: #1f232c; --line: #2c313c;
+    --text: #e7e9ee; --muted: #9aa3b2; --accent: #4ea1ff; --ok: #3ecf8e;
+    --warn: #f5b942; --err: #ff6b6b; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+             max(24px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    max-width: 900px; margin: 0 auto; -webkit-text-size-adjust: 100%;
+  }
+  h1 { font-size: 1.45rem; margin: 4px 0 10px; }
+  h2 { font-size: 1.15rem; margin: 0 0 10px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin: 12px 0; }
+  .readonly {
+    background: #0f2a1d; border: 2px solid var(--ok); color: #c9f7df; border-radius: 14px;
+    padding: 12px 14px; font-weight: 700; font-size: 1.1rem; display: flex; gap: 10px; align-items: center;
+  }
+  .readonly small { display: block; font-weight: 400; font-size: .85rem; color: #a8e6c8; margin-top: 4px; }
+  .note { background: var(--panel2); border-left: 4px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin: 10px 0; color: #cfd6e2; font-size: .95rem; }
+  .note.warn { border-left-color: var(--warn); }
+  .error { background: #3a1416; border: 1px solid var(--err); color: #ffd3d3; border-radius: 10px; padding: 12px; margin: 10px 0; white-space: pre-wrap; }
+  .hidden { display: none !important; }
+  button {
+    font: inherit; font-weight: 650; color: #fff; background: var(--accent); border: 0; border-radius: 12px;
+    min-height: 54px; padding: 12px 18px; width: 100%; margin: 6px 0; cursor: pointer; touch-action: manipulation;
+  }
+  button.secondary { background: #343a46; }
+  button.danger { background: #8a2c2c; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > button { flex: 1 1 180px; }
+  label.check { display: flex; align-items: center; gap: 12px; padding: 10px 0; font-size: 1.05rem; }
+  label.check input { width: 26px; height: 26px; }
+  textarea, input[type=text] {
+    width: 100%; font: 15px var(--mono); color: var(--text); background: #0b0d11; border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px; min-height: 48px;
+  }
+  .status { font-weight: 600; padding: 8px 0; }
+  .status.ok { color: var(--ok); } .status.warn { color: var(--warn); } .status.err { color: var(--err); }
+  .devname { font-size: 1.7rem; font-weight: 800; word-break: break-all; letter-spacing: .3px; }
+  .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #2a3550; color: #cfe0ff; font-size: .9rem; font-weight: 700; margin: 6px 6px 0 0; }
+  .badge.key { background: #4a3a10; color: #ffe2a0; font-size: 1.05rem; }
+  .muted { color: var(--muted); font-size: .9rem; }
+  .mono { font-family: var(--mono); font-size: .88rem; word-break: break-all; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .metric { background: var(--panel2); border-radius: 10px; padding: 10px; }
+  .metric .k { color: var(--muted); font-size: .8rem; }
+  .metric .v { font-size: 1.25rem; font-weight: 750; }
+  .metric .r { color: var(--muted); font-family: var(--mono); font-size: .75rem; }
+  .svc { border: 1px solid var(--line); border-radius: 12px; margin: 10px 0; overflow: hidden; }
+  .svc > .hd { background: var(--panel2); padding: 10px 12px; font-weight: 700; }
+  .chr { padding: 10px 12px; border-top: 1px solid var(--line); }
+  .chip { display: inline-block; font-size: .75rem; padding: 2px 8px; border-radius: 999px; background: #2b303b; margin: 4px 4px 0 0; }
+  .chip.r { background: #1d3b2c; } .chip.n { background: #1d2f4a; } .chip.w { background: #3b2a1d; }
+  .val { margin-top: 6px; background: #0b0d11; border-radius: 8px; padding: 8px; }
+  .val .dec { color: var(--ok); font-weight: 700; font-family: inherit; }
+  #log { max-height: 60vh; overflow: auto; background: #0b0d11; border-radius: 10px; padding: 6px; }
+  .pkt { border-bottom: 1px solid #1c2028; padding: 6px 4px; }
+  .pkt .t { color: var(--muted); font-size: .78rem; font-family: var(--mono); }
+  .frame { margin-top: 4px; padding: 6px; border-radius: 6px; background: #13241b; font-family: var(--mono); font-size: .8rem; }
+  table.regs { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  table.regs td, table.regs th { border-bottom: 1px solid var(--line); padding: 5px 6px; text-align: left; vertical-align: top; }
+  table.regs th { color: var(--muted); font-weight: 600; }
+  details > summary { cursor: pointer; padding: 6px 0; font-weight: 650; }
+  #events { font-family: var(--mono); font-size: .8rem; max-height: 180px; overflow: auto; color: #cfd6e2; }
+</style>
+</head>
+<body>
+<h1>🛴 Scooter BLE-utforskare</h1>
+
+<div class="readonly" id="readonlyBanner">🔒 <div>Appen skriver aldrig till scootern<small>Sidan läser och lyssnar bara. Inga kommandon eller värden skickas någonsin till scooterns egenskaper.</small></div></div>
+
+<div id="noBt" class="error hidden"></div>
+
+<div class="panel">
+  <h2>1. Sök och anslut</h2>
+  <label class="check"><input type="checkbox" id="acceptAll"> Visa alla enheter</label>
+  <label class="muted" for="extraUuids">Extra tjänst-UUID:er (valfritt, separera med komma/mellanslag, t.ex. <span class="mono">fff0, 0xffe0, 0000abcd-0000-1000-8000-00805f9b34fb</span>):</label>
+  <textarea id="extraUuids" rows="2" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="t.ex. fee0, 0xfef5"></textarea>
+  <div class="note">ℹ️ Web Bluetooth visar bara de tjänster som finns med i listan över tillåtna tjänster (standardlistan nedan plus dina extra UUID:er). Andra tjänster på scootern förblir osynliga för sidan.
+    <details><summary>Standardlista</summary><div class="mono" id="svcList"></div></details>
+  </div>
+  <button id="scanBtn">Sök scooter</button>
+  <div class="row">
+    <button id="reconnectBtn" class="secondary hidden">Anslut igen</button>
+    <button id="disconnectBtn" class="danger hidden">Koppla från</button>
+  </div>
+  <div id="status" class="status" role="status" aria-live="polite">Inte ansluten.</div>
+  <div id="errorBox" class="error hidden" role="alert"></div>
+</div>
+
+<div class="panel hidden" id="devicePanel">
+  <h2>Enhet</h2>
+  <div class="devname" id="devName">–</div>
+  <div id="devBadges"></div>
+  <div class="muted mono" id="devId"></div>
+</div>
+
+<div class="panel hidden" id="xbotPanel">
+  <h2>XBOT-avkodning</h2>
+  <div class="note warn">⚠️ Kontrollern kanske bara svarar när en app skickar en förfrågan. Eftersom den här sidan aldrig skriver något kan det hända att inga paket alls tas emot – det är helt normalt.</div>
+  <div id="xbotStatus" class="muted">Väntar på data …</div>
+  <div class="grid" id="metrics"></div>
+  <details><summary>Alla mottagna register</summary><div id="regTable"></div></details>
+</div>
+
+<div class="panel hidden" id="treePanel">
+  <h2>Tjänster och egenskaper</h2>
+  <div id="tree"></div>
+</div>
+
+<div class="panel hidden" id="logPanel">
+  <h2>Notifieringslogg <span class="muted" id="logCount"></span></h2>
+  <div id="log"></div>
+</div>
+
+<div class="panel">
+  <h2>Logg</h2>
+  <div class="row">
+    <button id="copyBtn" class="secondary">Kopiera logg</button>
+    <button id="downloadBtn" class="secondary">Ladda ner logg</button>
+  </div>
+  <div id="copyFallback" class="hidden">
+    <p class="muted">Kunde inte kopiera/ladda ner automatiskt. Markera texten nedan och kopiera manuellt:</p>
+    <textarea id="copyArea" rows="8" readonly></textarea>
+  </div>
+  <details><summary>Händelser</summary><div id="events"></div></details>
+  <p class="muted">Obs: för att få notifieringar slår telefonen på prenumerationsflaggan (CCCD) för egenskapen – det är Bluetooths standardsätt att börja lyssna och skickar inga kommandon eller värden till scootern.</p>
+</div>
+
+<script>
+'use strict';
+/*
+ * STRIKT SKRIVSKYDDAD: den här filen innehåller inga anrop som skriver
+ * värden till BLE-egenskaper eller deskriptorer. Endast läsning,
+ * uppräkning och notifieringar används.
+ */
+(function () {
+  const BASE = '-0000-1000-8000-00805f9b34fb';
+  const OPTIONAL_SERVICES = [0x1800, 0x1801, 0x180A, 0x180F, '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
+    0xae00, 0xffe0, 0xfff0, 0xfee7, 0xfe95, 0xffd0, 0xffb0, 0xffc0, 0x1910, 0xffe5, 0xfe59];
+  const FILTERS = [{ namePrefix: 'M0' }, { namePrefix: 'X0' }, { namePrefix: 'MIScooter' }];
+
+  // ---------- UUID-hjälp ----------
+  const full = (u) => typeof u === 'number' ? '0000' + u.toString(16).padStart(4, '0') + BASE : String(u).toLowerCase();
+  const short = (u) => { u = String(u).toLowerCase(); return (u.startsWith('0000') && u.endsWith(BASE)) ? '0x' + u.slice(4, 8).toUpperCase() : u; };
+  const s16 = (n) => full(n);
+
+  const SERVICE_NAMES = {
+    [s16(0x1800)]: 'Generic Access', [s16(0x1801)]: 'Generic Attribute', [s16(0x180A)]: 'Enhetsinformation (Device Information)',
+    [s16(0x180F)]: 'Batteritjänst (Battery)', '6e400001-b5a3-f393-e0a9-e50e24dcca9e': 'Nordic UART (NUS) – XBOT-profil "nus"',
+    [s16(0xae00)]: 'AE00 – XBOT-profil "ae00"', [s16(0xffe0)]: 'FFE0 – XBOT-profil "ffe0"', [s16(0xfff0)]: 'FFF0 – XBOT-profil (fff3/fff7 eller fff2/fff1)',
+    [s16(0xfee7)]: 'FEE7 (Tencent/WeChat)', [s16(0xfe95)]: 'FE95 (Xiaomi)', [s16(0xffd0)]: 'FFD0 (leverantörsspecifik)',
+    [s16(0xffb0)]: 'FFB0 (leverantörsspecifik)', [s16(0xffc0)]: 'FFC0 (leverantörsspecifik)', [s16(0x1910)]: '1910 (leverantörsspecifik)',
+    [s16(0xffe5)]: 'FFE5 (leverantörsspecifik)', [s16(0xfe59)]: 'FE59 (Nordic Secure DFU)'
+  };
+  const CHAR_NAMES = {
+    [s16(0x2A00)]: 'Enhetsnamn', [s16(0x2A01)]: 'Utseende (Appearance)', [s16(0x2A04)]: 'Föredragna anslutningsparametrar',
+    [s16(0x2A05)]: 'Service Changed', [s16(0x2AA6)]: 'Central Address Resolution', [s16(0x2B29)]: 'Client Supported Features',
+    [s16(0x2B2A)]: 'Database Hash', [s16(0x2B3A)]: 'Server Supported Features',
+    [s16(0x2A19)]: 'Batterinivå', [s16(0x2A23)]: 'System-ID', [s16(0x2A24)]: 'Modellnummer', [s16(0x2A25)]: 'Serienummer',
+    [s16(0x2A26)]: 'Firmwareversion', [s16(0x2A27)]: 'Hårdvaruversion', [s16(0x2A28)]: 'Mjukvaruversion',
+    [s16(0x2A29)]: 'Tillverkare', [s16(0x2A2A)]: 'IEEE-certifiering', [s16(0x2A50)]: 'PnP-ID',
+    '6e400002-b5a3-f393-e0a9-e50e24dcca9e': 'NUS RX (appens skrivkanal – används ej här)',
+    '6e400003-b5a3-f393-e0a9-e50e24dcca9e': 'NUS TX (notifieringar från scootern)',
+    [s16(0xae01)]: 'AE01 (XBOT skrivkanal – används ej här)', [s16(0xae02)]: 'AE02 (XBOT notifieringar)',
+    [s16(0xffe1)]: 'FFE1 (seriell data)', [s16(0xfff1)]: 'FFF1 (XBOT notifieringar, profil f2/f1)',
+    [s16(0xfff2)]: 'FFF2 (XBOT skrivkanal, profil f2/f1 – används ej här)', [s16(0xfff3)]: 'FFF3 (XBOT skrivkanal – används ej här)',
+    [s16(0xfff4)]: 'FFF4 (XBOT notifieringar, profil ffe0)', [s16(0xfff7)]: 'FFF7 (XBOT notifieringar, profil f3/f7)'
+  };
+  const DIS_STRINGS = new Set([0x2A00, 0x2A24, 0x2A25, 0x2A26, 0x2A27, 0x2A28, 0x2A29].map(s16));
+  const PROP_SV = {
+    broadcast: 'broadcast', read: 'läs', writeWithoutResponse: 'skriv utan svar', write: 'skriv', notify: 'notifiera',
+    indicate: 'indikera', authenticatedSignedWrites: 'signerad skrivning', reliableWrite: 'pålitlig skrivning', writableAuxiliaries: 'skrivbara tillägg'
+  };
+
+  // ---------- Byte-hjälp ----------
+  const toBytes = (dv) => new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
+  const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+  const ascii = (b) => Array.from(b, (x) => (x >= 32 && x < 127) ? String.fromCharCode(x) : '.').join('');
+  const h2 = (n) => '0x' + n.toString(16).toUpperCase().padStart(2, '0');
+  const h4 = (n) => '0x' + n.toString(16).toUpperCase().padStart(4, '0');
+  const concat = (a, b) => { const o = new Uint8Array(a.length + b.length); o.set(a, 0); o.set(b, a.length); return o; };
+  const utf8 = (b) => { try { return new TextDecoder('utf-8').decode(b).replace(/\0+$/, ''); } catch (e) { return ascii(b); } };
+  const nf = (v, d) => Number(v).toLocaleString('sv-SE', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const now = () => new Date();
+  const tstr = (d) => d.toLocaleTimeString('sv-SE', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+
+  // ---------- XBOT-protokoll (enligt dzikus/esphome-xbot) ----------
+  // Nyckel från annonserat namn (variant_for_name). Endast för avkodning av mottagen data.
+  function keyForName(name) {
+    name = name || '';
+    const early = [['X0Robot', 0x00], ['PRO-II', 0x34], ['TK2-S', 0x34], ['TK2_Y', 0x34], ['M1 MAX', 0x34], ['X2', 0x34],
+      ['CURTIS', 0x34], ['MSEnery', 0x34], ['smart', 0x34], ['TK', 0x00], ['XRIDER', 0x34], ['NXRIDE', 0x34],
+      ['M0Clean', 0x00], ['XBOT_AGV', 0x15], ['M6', 0x00], ['MiniRobot', 0x55], ['GoKart', 0x00], ['N3MTenbot', 0x00],
+      [' MiniPro', 0x00], [' Ninebot', 0x00], ['Ninebot', 0x00], ['miniPLUS_', 0x00], ['M5Robot', 0xD8]];
+    for (const [n, k] of early) if (name.includes(n)) return k;
+    const hasM1 = name.includes('M1'); const xi = name.indexOf('X');
+    if (hasM1 || (xi >= 0 && xi < 2)) return name.length > 6 ? (hasM1 ? 0x7A : 0x18) : 0x34;
+    const late = [['A6Robot', 0xD8], ['M0', 0x34], ['SFSO', 0x34], ['MIScooter', 0x00], ['W1', 0x37], ['Plus', 0x39]];
+    for (const [n, k] of late) if (name.includes(n)) return k;
+    return 0x34;
+  }
+  const xorBytes = (b, k) => k ? b.map((x) => x ^ k) : Uint8Array.from(b);
+  function checksumOk(f) {
+    if (f.length < 7) return false;
+    let s = 0; for (let i = 2; i < f.length - 2; i++) s = (s + f[i]) & 0xFFFF;
+    return ((~s) & 0xFFFF) === (f[f.length - 2] | (f[f.length - 1] << 8));
+  }
+  function extractFrames(buf) {
+    let pos = 0; const frames = [];
+    for (;;) {
+      while (pos + 1 < buf.length && !(buf[pos] === 0x55 && buf[pos + 1] === 0xAA)) pos++;
+      if (buf.length - pos < 3) return { frames, consumed: pos };
+      const total = buf[pos + 2] + 6;
+      if (buf.length - pos < total) return { frames, consumed: pos };
+      const f = buf.slice(pos, pos + total);
+      if (checksumOk(f)) { frames.push(f); pos += total; } else pos += 2;
+    }
+  }
+  const signed16 = (r) => (r & 0x8000) ? r - 0x10000 : r;
+  // Register (huvudkontroller, src 0x23). fmt returnerar {text, value}.
+  const REGS = {
+    0x1B: { name: 'Felkod', fmt: (r) => ({ value: signed16(r), text: String(signed16(r)) }) },
+    0x1C: { name: 'Varningskod', fmt: (r) => ({ value: signed16(r), text: String(signed16(r)) }) },
+    0x1D: { name: 'Kontrollerversion (del 2)', fmt: (r) => ({ value: h4(r), text: h4(r) }) },
+    0x1E: { name: 'Kontrollerversion (del 1)', fmt: (r) => ({ value: h4(r), text: h4(r) }) },
+    0x22: { name: 'Batteri', fmt: (r) => ({ value: r, text: r + ' %' }) },
+    0x27: { name: 'Hastighet', fmt: (r) => ({ value: r / 100, text: nf(r / 100, 2) + ' km/h' }) },
+    0x29: { name: 'Total sträcka (lågt ord)', fmt: (r) => ({ value: r, text: String(r) }) },
+    0x2A: { name: 'Total sträcka (högt ord)', fmt: (r) => ({ value: r, text: String(r) }) },
+    0x2F: { name: 'Trippsträcka', fmt: (r) => ({ value: signed16(r) / 100, text: nf(signed16(r) / 100, 2) + ' km' }), sentinel: true },
+    0x32: { name: 'Drifttid (lågt ord)', fmt: (r) => ({ value: r, text: String(r) }) },
+    0x33: { name: 'Drifttid (högt ord)', fmt: (r) => ({ value: r, text: String(r) }) },
+    0x3A: { name: 'Tripptid', fmt: (r) => ({ value: r, text: r + ' s' }), sentinel: true },
+    0x3F: { name: 'Motortemperatur', fmt: (r) => ({ value: signed16(r) / 10, text: nf(signed16(r) / 10, 1) + ' °C' }) },
+    0x47: { name: 'Spänning', fmt: (r) => ({ value: r / 100, text: nf(r / 100, 2) + ' V' }) },
+    0x48: { name: 'Ström', fmt: (r) => ({ value: signed16(r) / 100, text: nf(signed16(r) / 100, 2) + ' A' }) },
+    0xBB: { name: 'Temperatur', fmt: (r) => ({ value: signed16(r) / 10, text: nf(signed16(r) / 10, 1) + ' °C' }) },
+    0xEE: { name: 'Hjulfaktor (kalibrering)', fmt: (r) => ({ value: r, text: String(r) }) }
+  };
+  function describeReg(src, reg, raw) {
+    const info = REGS[reg];
+    const o = { reg: h2(reg), raw, hex: h4(raw) };
+    if (info) {
+      o.label = info.name + (src === 0x23 ? '' : ' (?)');
+      if (raw === 0xFFFF && info.sentinel) { o.text = 'ej tillgängligt (0xFFFF)'; o.value = null; }
+      else { const f = info.fmt(raw); o.text = f.text; o.value = f.value; }
+    } else { o.label = 'okänt'; o.text = h4(raw); o.value = raw; }
+    return o;
+  }
+
+  // ---------- Tillstånd ----------
+  const S = {
+    device: null, startedAt: null, services: [], log: [], events: [], connected: false, busy: false,
+    xbot: { nameKey: null, lockedKey: null, lockedOn: null, buffers: {}, regs: {}, frameCount: 0, lastSrc: null }
+  };
+  const MAX_LOG = 20000, MAX_DOM = 400;
+  const $ = (id) => document.getElementById(id);
+  function h(tag, attrs, ...kids) {
+    const e = document.createElement(tag);
+    if (attrs) for (const k in attrs) { if (k === 'class') e.className = attrs[k]; else if (k === 'text') e.textContent = attrs[k]; else e.setAttribute(k, attrs[k]); }
+    for (const c of kids) if (c != null) e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    return e;
+  }
+  function event(msg, level) {
+    const d = now(); S.events.push({ t: d.toISOString(), level: level || 'info', msg });
+    const el = $('events'); el.prepend(h('div', null, tstr(d) + '  ' + msg));
+  }
+  function setStatus(msg, cls) { const s = $('status'); s.textContent = msg; s.className = 'status ' + (cls || ''); event(msg, cls); }
+  function showError(msg) { const b = $('errorBox'); b.textContent = msg; b.classList.remove('hidden'); event('FEL: ' + msg, 'err'); }
+  function clearError() { $('errorBox').classList.add('hidden'); }
+
+  function swedishError(e, ctx) {
+    const name = (e && e.name) || ''; const m = (e && e.message) || String(e);
+    if (name === 'NotFoundError') {
+      if (ctx === 'search') return 'Ingen enhet valdes (sökningen avbröts eller ingen scooter hittades).\nTips: kontrollera att scootern är påslagen och inte ansluten till tillverkarens app, eller kryssa i "Visa alla enheter".';
+      return 'Hittades inte: ' + m;
+    }
+    if (name === 'SecurityError') return 'Säkerhetsfel: Bluetooth får bara användas på en säker sida (https) och sökningen måste startas med ett knapptryck.\n(' + m + ')';
+    if (name === 'NotAllowedError') return 'Bluetooth-åtkomst nekades. Tillåt Bluetooth för appen i iOS Inställningar → Integritet → Bluetooth.\n(' + m + ')';
+    if (name === 'NetworkError') return 'Anslutningen misslyckades eller bröts. Är scootern påslagen och nära? Stäng tillverkarens app (scootern accepterar ofta bara en anslutning åt gången) och försök igen.\n(' + m + ')';
+    if (name === 'NotSupportedError') return 'Åtgärden stöds inte av webbläsaren eller enheten.\n(' + m + ')';
+    if (name === 'InvalidStateError') return 'Ogiltigt läge – enheten är troligen frånkopplad.\n(' + m + ')';
+    if (name === 'TypeError') return 'Ogiltig parameter (t.ex. felaktig UUID).\n(' + m + ')';
+    if (name === 'TimeoutError') return m;
+    return 'Oväntat fel: ' + (name ? name + ': ' : '') + m;
+  }
+  function timeout(p, ms, msg) {
+    return Promise.race([p, new Promise((_, rej) => setTimeout(() => { const e = new Error(msg); e.name = 'TimeoutError'; rej(e); }, ms))]);
+  }
+
+  function parseExtra(text) {
+    const list = [], errors = [];
+    for (const raw of text.split(/[\s,;]+/).filter(Boolean)) {
+      const t = raw.toLowerCase().replace(/^0x/, '');
+      if (/^[0-9a-f]{4}$/.test(t)) list.push(parseInt(t, 16));
+      else if (/^[0-9a-f]{8}$/.test(t)) list.push(t + BASE);
+      else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(t)) list.push(t);
+      else errors.push(raw);
+    }
+    return { list, errors };
+  }
+
+  // ---------- Sök / anslut ----------
+  function onScan() {
+    clearError();
+    if (!navigator.bluetooth) { showError('Web Bluetooth saknas i den här webbläsaren. Öppna sidan i Bluefy.'); return; }
+    const { list, errors } = parseExtra($('extraUuids').value);
+    if (errors.length) { showError('Ogiltig UUID: ' + errors.join(', ') + '\nAnvänd t.ex. fff0, 0xfff0 eller en full 128-bitars UUID.'); return; }
+    const seen = new Set(); const optionalServices = [];
+    for (const u of OPTIONAL_SERVICES.concat(list)) { const f = full(u); if (!seen.has(f)) { seen.add(f); optionalServices.push(u); } }
+    const opts = $('acceptAll').checked ? { acceptAllDevices: true, optionalServices } : { filters: FILTERS, optionalServices };
+    setStatus('Söker … välj scootern i listan.', 'warn');
+    // requestDevice anropas direkt i klickhanteraren (krav på användargest).
+    navigator.bluetooth.requestDevice(opts).then((device) => {
+      setupDevice(device); return connectAndExplore();
+    }).catch((e) => { setStatus('Inte ansluten.', 'err'); showError(swedishError(e, 'search')); });
+  }
+
+  function setupDevice(device) {
+    if (S.device && S.device !== device) {
+      try { S.device.removeEventListener('gattserverdisconnected', onDisconnected); } catch (e) { /* ignorera */ }
+    }
+    S.device = device;
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    const name = device.name || '';
+    S.xbot = { nameKey: keyForName(name), lockedKey: null, lockedOn: null, buffers: {}, regs: {}, frameCount: 0, lastSrc: null };
+    $('devicePanel').classList.remove('hidden');
+    $('devName').textContent = name || '(namnlös enhet)';
+    $('devId').textContent = 'ID: ' + (device.id || '–');
+    const badges = $('devBadges'); badges.textContent = '';
+    if (name.includes('M0')) badges.append(h('span', { class: 'badge key' }, 'XBOT-nyckel ' + h2(S.xbot.nameKey)));
+    else if (name) badges.append(h('span', { class: 'badge' }, 'Trolig XBOT-nyckel från namnet: ' + h2(S.xbot.nameKey)));
+    if (/^(M0|X0|MIScooter)/.test(name)) badges.append(h('span', { class: 'badge' }, 'LebiTEC/XBOT-kontroller'));
+    event('Vald enhet: ' + (name || '(namnlös)') + ' id=' + device.id);
+  }
+
+  async function connectAndExplore() {
+    const dev = S.device; if (!dev || S.busy) return;
+    S.busy = true; updateButtons(); clearError();
+    try {
+      let server;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          setStatus('Ansluter' + (attempt > 1 ? ' (försök ' + attempt + ')' : '') + ' …', 'warn');
+          server = await timeout(dev.gatt.connect(), 20000, 'Tidsgränsen för anslutning (20 s) överskreds. Är scootern på och inom räckhåll?');
+          break;
+        } catch (e) { if (attempt === 2) throw e; event('Anslutningsförsök misslyckades: ' + (e && e.message)); }
+      }
+      S.connected = true; S.startedAt = S.startedAt || now();
+      setStatus('Ansluten. Läser tjänster …', 'ok');
+      await explore(server);
+      const n = S.services.reduce((a, s) => a + s.characteristics.filter((c) => c.notifying).length, 0);
+      setStatus('Ansluten – ' + S.services.length + ' tjänst(er), lyssnar på ' + n + ' egenskap(er).', 'ok');
+    } catch (e) {
+      showError(swedishError(e, 'connect'));
+      setStatus(dev.gatt && dev.gatt.connected ? 'Ansluten (med fel).' : 'Inte ansluten.', 'err');
+    } finally { S.busy = false; updateButtons(); }
+  }
+
+  function onDisconnected() {
+    S.connected = false;
+    setStatus('Anslutningen till scootern bröts. Tryck "Anslut igen" för att återansluta.', 'err');
+    for (const s of S.services) for (const c of s.characteristics) c.notifying = false;
+    renderTree(); updateButtons();
+  }
+  function onDisconnectClick() {
+    if (S.device && S.device.gatt && S.device.gatt.connected) { S.device.gatt.disconnect(); }
+    else onDisconnected();
+  }
+  function updateButtons() {
+    const has = !!S.device; const conn = has && S.device.gatt && S.device.gatt.connected;
+    $('scanBtn').disabled = S.busy || !navigator.bluetooth;
+    $('reconnectBtn').classList.toggle('hidden', !has || conn || S.busy);
+    $('disconnectBtn').classList.toggle('hidden', !conn);
+  }
+
+  async function explore(server) {
+    S.services = [];
+    let services = [];
+    try { services = await server.getPrimaryServices(); }
+    catch (e) {
+      if (e && e.name === 'NotFoundError') { event('Inga tillåtna tjänster hittades.'); }
+      else throw e;
+    }
+    for (const svc of services) {
+      const uuid = String(svc.uuid).toLowerCase();
+      const so = { uuid, short: short(uuid), name: SERVICE_NAMES[uuid] || 'Okänd tjänst', characteristics: [], error: null };
+      S.services.push(so);
+      try {
+        const chars = await svc.getCharacteristics();
+        for (const ch of chars) {
+          const cu = String(ch.uuid).toLowerCase();
+          const props = Object.keys(PROP_SV).filter((p) => ch.properties && ch.properties[p]);
+          so.characteristics.push({ uuid: cu, short: short(cu), name: CHAR_NAMES[cu] || 'Okänd egenskap', properties: props,
+            read: null, descriptors: [], notifying: false, notifyError: null, packets: 0, _ch: ch, _svc: uuid });
+        }
+      } catch (e) { so.error = swedishError(e); event('Kunde inte lista egenskaper för ' + so.short + ': ' + so.error, 'err'); }
+    }
+    $('treePanel').classList.remove('hidden'); renderTree();
+    // Läs alla läsbara egenskaper (sekventiellt).
+    for (const so of S.services) for (const c of so.characteristics) {
+      if (c.properties.includes('read')) {
+        try { const v = await c._ch.readValue(); c.read = decodeRead(c.uuid, toBytes(v)); }
+        catch (e) { c.read = { error: swedishError(e) }; }
+        renderTree();
+      }
+      if (typeof c._ch.getDescriptors === 'function') {
+        try {
+          const ds = await c._ch.getDescriptors();
+          for (const d of ds) {
+            const du = String(d.uuid).toLowerCase(); const dd = { uuid: du, short: short(du) };
+            if (du === s16(0x2901)) { try { const v = toBytes(await d.readValue()); dd.hex = hex(v); dd.text = utf8(v); } catch (e) { dd.error = swedishError(e); } }
+            c.descriptors.push(dd);
+          }
+        } catch (e) { /* deskriptorer stöds inte alltid */ }
+      }
+    }
+    renderTree();
+    // Starta notifieringar.
+    for (const so of S.services) for (const c of so.characteristics) {
+      if (c.properties.includes('notify') || c.properties.includes('indicate')) {
+        try {
+          if (!c._listener) { c._listener = (ev) => onPacket(c, ev); c._ch.addEventListener('characteristicvaluechanged', c._listener); }
+          await c._ch.startNotifications(); c.notifying = true; c.notifyError = null;
+          event('Lyssnar på ' + so.short + ' / ' + c.short);
+        } catch (e) { c.notifyError = swedishError(e); event('Kunde inte starta notifieringar på ' + c.short + ': ' + c.notifyError, 'err'); }
+      }
+    }
+    renderTree();
+    $('logPanel').classList.remove('hidden'); $('xbotPanel').classList.remove('hidden');
+  }
+
+  function decodeRead(uuid, b) {
+    const o = { hex: hex(b), ascii: ascii(b), length: b.length, at: now().toISOString() };
+    if (DIS_STRINGS.has(uuid)) o.decoded = utf8(b);
+    else if (uuid === s16(0x2A19) && b.length >= 1) o.decoded = b[0] + ' %';
+    else if (uuid === s16(0x2A01) && b.length >= 2) o.decoded = 'Utseende ' + h4(b[0] | (b[1] << 8));
+    else if (uuid === s16(0x2A50) && b.length >= 7) {
+      const src = { 1: 'Bluetooth SIG', 2: 'USB' }[b[0]] || b[0];
+      o.decoded = 'Källa ' + src + ', leverantör ' + h4(b[1] | (b[2] << 8)) + ', produkt ' + h4(b[3] | (b[4] << 8)) + ', version ' + h4(b[5] | (b[6] << 8));
+    } else if (uuid === s16(0x2A23)) o.decoded = 'System-ID ' + hex(b);
+    return o;
+  }
+
+  // ---------- Notifieringar ----------
+  function onPacket(c, ev) {
+    const dv = ev.target && ev.target.value; if (!dv) return;
+    const b = toBytes(dv); const d = now(); c.packets++;
+    const entry = { t: d.toISOString(), ms: S.startedAt ? d - S.startedAt : 0, service: c._svc, char: c.uuid, charShort: c.short,
+      hex: hex(b), ascii: ascii(b), length: b.length, frames: [] };
+    try { entry.frames = xbotFeed(c.uuid, b); } catch (e) { entry.decodeError = String(e && e.message); }
+    if (c.uuid === s16(0x2A19) || DIS_STRINGS.has(c.uuid)) { const dr = decodeRead(c.uuid, b); entry.decoded = dr.decoded; c.read = dr; renderTree(); }
+    S.log.push(entry); if (S.log.length > MAX_LOG) S.log.shift();
+    appendLog(entry, d);
+    if (entry.frames.length) renderXbot();
+    else if (S.xbot.lockedKey === null) $('xbotStatus').textContent = 'Tar emot data men har ännu inte hittat någon giltig 55 AA-ram (' + S.log.length + ' paket).';
+  }
+
+  function candidateKeys(raw) {
+    const c = []; const add = (k) => { if (k != null && !c.includes(k)) c.push(k); };
+    add(S.xbot.nameKey); add(0x00); add(0x34);
+    for (let i = 0; i + 1 < raw.length; i++) { const k = raw[i] ^ 0x55; if ((raw[i + 1] ^ k) === 0xAA) add(k); }
+    return c;
+  }
+  function xbotFeed(charKey, bytes) {
+    const X = S.xbot; let raw = concat(X.buffers[charKey] || new Uint8Array(0), bytes);
+    if (raw.length > 2048) raw = raw.slice(raw.length - 2048);
+    const out = [];
+    const take = (k) => {
+      const r = extractFrames(xorBytes(raw, k));
+      if (!r.frames.length && X.lockedKey === null) return false;
+      for (const f of r.frames) out.push(handleFrame(f, k, charKey));
+      raw = raw.slice(r.consumed); return r.frames.length > 0;
+    };
+    if (X.lockedKey !== null) take(X.lockedKey);
+    else {
+      for (const k of candidateKeys(raw)) {
+        if (take(k)) { X.lockedKey = k; X.lockedOn = { char: charKey, at: now().toISOString() }; event('XBOT-nyckel låst: ' + h2(k) + ' (verifierad checksumma på ' + short(charKey) + ')', 'ok'); break; }
+      }
+    }
+    X.buffers[charKey] = raw;
+    return out;
+  }
+  function handleFrame(f, key, charKey) {
+    const X = S.xbot; X.frameCount++;
+    const src = f[3], cmd = f[4], base = f[5], plen = f.length - 8;
+    const regs = []; const t = now().toISOString();
+    X.regs[src] = X.regs[src] || {}; X.lastSrc = src;
+    for (let i = 0; i + 1 < plen; i += 2) {
+      const reg = base + i / 2; if (reg > 0xFF) break;
+      const raw = f[6 + i] | (f[7 + i] << 8);
+      X.regs[src][reg] = { raw, t };
+      regs.push(describeReg(src, reg, raw));
+    }
+    const fr = { key: h2(key), char: short(charKey), src: h2(src), cmd: h2(cmd), reg: h2(base), len: f[2], payloadLength: plen,
+      checksum: 'OK', hex: hex(f), registers: regs };
+    const R = X.regs[src];
+    if (R[0x29] && R[0x2A] && (base <= 0x2A && base + plen / 2 > 0x29)) fr.totalDistanceKm = ((R[0x2A].raw * 65536) + R[0x29].raw) / 1000;
+    return fr;
+  }
+
+  // ---------- Rendering ----------
+  function appendLog(e, d) {
+    const log = $('log');
+    const el = h('div', { class: 'pkt' },
+      h('div', { class: 't' }, tstr(d) + '  +' + (e.ms / 1000).toFixed(3) + ' s  ' + e.charShort + '  (' + e.length + ' B)'),
+      h('div', { class: 'mono' }, e.hex), h('div', { class: 'mono muted' }, e.ascii));
+    if (e.decoded != null) el.append(h('div', { class: 'frame' }, e.decoded));
+    for (const fr of e.frames) {
+      const lines = ['✔ XBOT-ram (nyckel ' + fr.key + ') src ' + fr.src + ' cmd ' + fr.cmd + ' reg ' + fr.reg + ' len ' + fr.len + ' checksumma OK'];
+      for (const r of fr.registers) lines.push('  ' + r.reg + ' ' + r.label + ': ' + r.text + (r.label === 'okänt' ? '' : ' [' + r.hex + ']'));
+      if (fr.totalDistanceKm != null) lines.push('  Total sträcka: ' + nf(fr.totalDistanceKm, 3) + ' km');
+      el.append(h('div', { class: 'frame', style: 'white-space:pre-wrap' }, lines.join('\n')));
+    }
+    log.append(el);
+    while (log.childElementCount > MAX_DOM) log.firstElementChild.remove();
+    const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 80; if (stick) log.scrollTop = log.scrollHeight;
+    $('logCount').textContent = '(' + S.log.length + ' paket)';
+  }
+
+  function summary() {
+    const X = S.xbot; const src = X.regs[0x23] ? 0x23 : X.lastSrc; const R = (src != null && X.regs[src]) || {};
+    const g = (r) => R[r] ? R[r].raw : null; const m = {};
+    const put = (id, label, text, rawText, value) => { m[id] = { label, text, raw: rawText, value }; };
+    if (g(0x22) != null) put('battery', 'Batteri', g(0x22) + ' %', 'reg 0x22 = ' + h4(g(0x22)), g(0x22));
+    if (g(0x47) != null) put('voltage', 'Spänning', nf(g(0x47) / 100, 2) + ' V', 'reg 0x47 = ' + h4(g(0x47)), g(0x47) / 100);
+    if (g(0x48) != null) put('current', 'Ström', nf(signed16(g(0x48)) / 100, 2) + ' A', 'reg 0x48 = ' + h4(g(0x48)), signed16(g(0x48)) / 100);
+    if (g(0x47) != null && g(0x48) != null) { const p = (g(0x47) / 100) * (signed16(g(0x48)) / 100); put('power', 'Effekt (V×A)', nf(p, 1) + ' W', 'beräknad', p); }
+    if (g(0x27) != null) put('speed', 'Hastighet', nf(g(0x27) / 100, 2) + ' km/h', 'reg 0x27 = ' + h4(g(0x27)), g(0x27) / 100);
+    if (g(0x29) != null && g(0x2A) != null) { const v = (g(0x2A) * 65536 + g(0x29)) / 1000; put('totalDistance', 'Total sträcka', nf(v, 3) + ' km', '0x2A:0x29 = ' + h4(g(0x2A)) + ':' + h4(g(0x29)), v); }
+    if (g(0x2F) != null) put('tripDistance', 'Trippsträcka', g(0x2F) === 0xFFFF ? 'ej tillgängligt' : nf(signed16(g(0x2F)) / 100, 2) + ' km', 'reg 0x2F = ' + h4(g(0x2F)), g(0x2F) === 0xFFFF ? null : signed16(g(0x2F)) / 100);
+    if (g(0xBB) != null) put('temperature', 'Temperatur', nf(signed16(g(0xBB)) / 10, 1) + ' °C', 'reg 0xBB = ' + h4(g(0xBB)), signed16(g(0xBB)) / 10);
+    if (g(0x1B) != null) put('errorCode', 'Felkod', String(signed16(g(0x1B))), 'reg 0x1B = ' + h4(g(0x1B)), signed16(g(0x1B)));
+    if (g(0x1C) != null) put('warningCode', 'Varningskod', String(signed16(g(0x1C))), 'reg 0x1C = ' + h4(g(0x1C)), signed16(g(0x1C)));
+    if (g(0x1D) != null || g(0x1E) != null) {
+      const a = g(0x1E), b = g(0x1D); const txt = (a != null ? a.toString(16).toUpperCase().padStart(4, '0') : '????') + (b != null ? b.toString(16).toUpperCase().padStart(4, '0') : '????');
+      put('controllerVersion', 'Kontrollerversion', txt, '0x1E=' + (a != null ? h4(a) : '–') + ' 0x1D=' + (b != null ? h4(b) : '–'), txt);
+    }
+    return { src: src != null ? h2(src) : null, metrics: m };
+  }
+
+  function renderXbot() {
+    const X = S.xbot; const sm = summary();
+    $('xbotStatus').textContent = 'Nyckel: ' + (X.lockedKey === null ? 'ej låst' : h2(X.lockedKey) + ' (låst)') + ' · ' + X.frameCount + ' giltiga ramar · källa ' + (sm.src || '–');
+    const grid = $('metrics'); grid.textContent = '';
+    for (const id in sm.metrics) {
+      const v = sm.metrics[id];
+      grid.append(h('div', { class: 'metric', 'data-metric': id }, h('div', { class: 'k' }, v.label), h('div', { class: 'v' }, v.text), h('div', { class: 'r' }, v.raw)));
+    }
+    const wrap = $('regTable'); wrap.textContent = '';
+    for (const src of Object.keys(X.regs).map(Number).sort((a, b) => a - b)) {
+      const tbl = h('table', { class: 'regs' }, h('tr', null, h('th', null, 'Reg'), h('th', null, 'Rå'), h('th', null, 'Betydelse'), h('th', null, 'Värde')));
+      for (const reg of Object.keys(X.regs[src]).map(Number).sort((a, b) => a - b)) {
+        const d = describeReg(src, reg, X.regs[src][reg].raw);
+        tbl.append(h('tr', null, h('td', { class: 'mono' }, d.reg), h('td', { class: 'mono' }, d.hex), h('td', null, d.label), h('td', null, d.text)));
+      }
+      wrap.append(h('div', { class: 'muted', style: 'margin-top:8px' }, 'Källa (src) ' + h2(src) + (src === 0x23 ? ' – huvudkontroller' : ' – okänd registerkarta, etiketter osäkra')), tbl);
+    }
+  }
+
+  function renderTree() {
+    const tree = $('tree'); tree.textContent = '';
+    if (!S.services.length) { tree.append(h('div', { class: 'muted' }, 'Inga tillåtna tjänster hittades. Lägg till fler UUID:er i fältet ovan och sök igen.')); return; }
+    for (const so of S.services) {
+      const box = h('div', { class: 'svc' }, h('div', { class: 'hd' }, so.short + ' – ' + so.name, so.short !== so.uuid ? h('div', { class: 'mono muted' }, so.uuid) : null));
+      if (so.error) box.append(h('div', { class: 'chr error' }, so.error));
+      if (!so.characteristics.length && !so.error) box.append(h('div', { class: 'chr muted' }, 'Inga egenskaper.'));
+      for (const c of so.characteristics) {
+        const el = h('div', { class: 'chr' }, h('div', null, h('b', null, c.short), ' – ' + c.name));
+        if (c.short !== c.uuid) el.append(h('div', { class: 'mono muted' }, c.uuid));
+        const chips = h('div');
+        for (const p of c.properties) chips.append(h('span', { class: 'chip ' + (p === 'read' ? 'r' : (p === 'notify' || p === 'indicate') ? 'n' : /write/i.test(p) ? 'w' : '') }, PROP_SV[p]));
+        if (c.notifying) chips.append(h('span', { class: 'chip n' }, '▶ lyssnar (' + c.packets + ' paket)'));
+        el.append(chips);
+        if (c.read) {
+          if (c.read.error) el.append(h('div', { class: 'val error' }, 'Läsfel: ' + c.read.error));
+          else {
+            const v = h('div', { class: 'val' });
+            if (c.read.decoded != null) v.append(h('div', { class: 'dec' }, c.read.decoded));
+            v.append(h('div', { class: 'mono' }, 'HEX: ' + (c.read.hex || '(tomt)')), h('div', { class: 'mono muted' }, 'ASCII: ' + c.read.ascii));
+            el.append(v);
+          }
+        }
+        for (const d of c.descriptors) if (d.text) el.append(h('div', { class: 'muted' }, 'Beskrivning: ' + d.text));
+        if (c.notifyError) el.append(h('div', { class: 'val error' }, 'Notifieringar: ' + c.notifyError));
+        box.append(el);
+      }
+      tree.append(box);
+    }
+  }
+
+  // ---------- Export ----------
+  function buildExport() {
+    const sm = summary();
+    return {
+      generator: 'Scooter BLE-utforskare (strikt skrivskyddad)', exportedAt: now().toISOString(), userAgent: navigator.userAgent,
+      device: S.device ? { name: S.device.name || null, id: S.device.id || null, connected: !!(S.device.gatt && S.device.gatt.connected) } : null,
+      services: S.services.map((s) => ({ uuid: s.uuid, short: s.short, name: s.name, error: s.error,
+        characteristics: s.characteristics.map((c) => ({ uuid: c.uuid, short: c.short, name: c.name, properties: c.properties,
+          descriptors: c.descriptors, notifying: c.notifying, notifyError: c.notifyError, packets: c.packets })) })),
+      readValues: S.services.flatMap((s) => s.characteristics.filter((c) => c.read).map((c) => Object.assign({ service: s.short, char: c.short, uuid: c.uuid, name: c.name }, c.read))),
+      xbot: { nameDerivedKey: S.xbot.nameKey == null ? null : h2(S.xbot.nameKey), lockedKey: S.xbot.lockedKey == null ? null : h2(S.xbot.lockedKey),
+        lockedOn: S.xbot.lockedOn, validFrames: S.xbot.frameCount, summary: sm,
+        registers: Object.fromEntries(Object.entries(S.xbot.regs).map(([src, regs]) => [h2(Number(src)),
+          Object.fromEntries(Object.entries(regs).map(([r, v]) => [h2(Number(r)), Object.assign(describeReg(Number(src), Number(r), v.raw), { t: v.t })]))])) },
+      notifications: S.log, events: S.events
+    };
+  }
+  const exportText = () => JSON.stringify(buildExport(), null, 2);
+  function showFallback(text) { $('copyArea').value = text; $('copyFallback').classList.remove('hidden'); $('copyArea').focus(); $('copyArea').select(); }
+  async function onCopy() {
+    const text = exportText();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); setStatus('Loggen kopierades (' + text.length + ' tecken).', 'ok'); return; }
+      throw new Error('inget urklipps-API');
+    } catch (e) {
+      const ta = $('copyArea'); ta.value = text; $('copyFallback').classList.remove('hidden'); ta.select();
+      let ok = false; try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+      if (ok) setStatus('Loggen kopierades.', 'ok'); else { showFallback(text); showError('Kunde inte kopiera automatiskt – kopiera texten i rutan manuellt.'); }
+    }
+  }
+  function onDownload() {
+    const text = exportText();
+    try {
+      const blob = new Blob([text], { type: 'application/json' }); const url = URL.createObjectURL(blob);
+      const name = 'scooter-ble-' + ((S.device && S.device.name) || 'logg').replace(/[^A-Za-z0-9_-]/g, '_') + '-' + now().toISOString().replace(/[:.]/g, '-') + '.json';
+      const a = h('a', { href: url, download: name }); document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setStatus('Loggen laddas ner som ' + name + '. Fungerar det inte? Använd "Kopiera logg".', 'ok');
+    } catch (e) { showFallback(text); showError('Nedladdning misslyckades – kopiera texten i rutan manuellt.'); }
+  }
+
+  // ---------- Start ----------
+  $('svcList').textContent = OPTIONAL_SERVICES.map((u) => short(full(u))).join(', ');
+  $('scanBtn').addEventListener('click', onScan);
+  $('reconnectBtn').addEventListener('click', () => connectAndExplore());
+  $('disconnectBtn').addEventListener('click', onDisconnectClick);
+  $('copyBtn').addEventListener('click', onCopy);
+  $('downloadBtn').addEventListener('click', onDownload);
+  if (!navigator.bluetooth) {
+    const nb = $('noBt'); nb.classList.remove('hidden');
+    nb.textContent = 'Den här webbläsaren saknar Web Bluetooth (Safari på iPhone stöder det inte).\n👉 Öppna sidan i Bluefy (gratis i App Store) för att ansluta till scootern.' +
+      (window.isSecureContext === false ? '\nSidan måste dessutom öppnas via https.' : '');
+    setStatus('Web Bluetooth saknas – öppna sidan i Bluefy.', 'err');
+  } else if (navigator.bluetooth.getAvailability) {
+    navigator.bluetooth.getAvailability().then((ok) => { if (!ok) showError('Bluetooth verkar vara avstängt eller otillgängligt. Slå på Bluetooth och försök igen.'); }).catch(() => {});
+  }
+  updateButtons();
+  window.__scooterExplorer = { state: S, buildExport, keyForName, extractFrames, checksumOk };
+})();
+</script>
+</body>
+</html>
